@@ -1,4 +1,4 @@
-# Blob Arena
+# JellyBump
 
 Pair one or more phones to a desktop browser via QR code, stream each phone's
 tilt (`DeviceOrientationEvent`) over a WebSocket relay, and drive a growing
