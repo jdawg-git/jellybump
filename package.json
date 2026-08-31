@@ -1,0 +1,14 @@
+{
+  "name": "tilt-controller-prototype",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Phone-as-tilt-controller prototype: pair a phone to a desktop via QR, stream orientation, render a live arrow.",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.18.0"
+  }
+}

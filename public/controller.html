@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>JELLYBUMP</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --fg: #e7ecf3;
+      --muted: #8b97a7;
+      --accent: #4f9dff;
+      --good: #3ddc84;
+      --bad: #ff6b6b;
+      --track: #ffffff;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; -webkit-user-select: none; user-select: none; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body { background: var(--bg); color: var(--fg); font: 16px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+    /* Forced-landscape stage (rotates when the device viewport is portrait). */
+    #stage {
+      position: fixed; top: 50%; left: 50%;
+      transform-origin: center center; background: var(--bg); overflow: hidden;
+    }
+    #pop { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 50; }
+
+    .screen { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; }
+    .screen.show { display: flex; }
+
+    .brand { width: 210px; max-width: 56%; display: block; margin: 8px auto 0; }
+    .brand.small { width: 170px; margin: 8px auto 0; }
+
+    /* Gelatin blob look — used by buttons and the player circles. */
+    @keyframes blobIdle {
+      0%, 100% { transform: scale(1, 1) rotate(0deg); }
+      30% { transform: scale(1.035, 0.965) rotate(-1.2deg); }
+      60% { transform: scale(0.972, 1.028) rotate(1.2deg); }
+    }
+    .blobby {
+      position: relative; overflow: hidden;
+      background: var(--c, var(--accent));
+      background: radial-gradient(circle at 35% 30%,
+        color-mix(in srgb, var(--c, var(--accent)), #fff 52%) 0%,
+        var(--c, var(--accent)) 54%,
+        color-mix(in srgb, var(--c, var(--accent)), #000 36%) 100%);
+      box-shadow: 0 6px 26px -8px var(--c, var(--accent)), inset 0 -7px 16px -10px rgba(0,0,0,.55);
+    }
+    .blobby::before {
+      content: ''; position: absolute; top: 12%; left: 17%; width: 44%; height: 38%;
+      border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle, rgba(255,255,255,.85), rgba(255,255,255,0) 68%);
+    }
+
+    /* --- Start screen --- */
+    #startScreen { justify-content: center; gap: 14px; }
+    .hold { color: var(--muted); font-size: 13px; }
+    .room { display: none; }   /* room code hidden — join is via QR/link only */
+    .room b { color: var(--fg); letter-spacing: 3px; }
+    button.big {
+      --c: var(--accent);
+      appearance: none; border: none; border-radius: 42px;
+      color: #06122a; font-size: 22px; font-weight: 800; padding: 18px 46px; cursor: pointer;
+      animation: blobIdle 2.6s ease-in-out infinite;
+    }
+    button.big:active { animation: none; transform: scale(1.1, 0.82); }
+    button.secondary {
+      appearance: none; border: 1px solid #333b48; border-radius: 12px; background: #222834;
+      color: var(--fg); font-size: 17px; font-weight: 600; padding: 12px 26px; cursor: pointer;
+    }
+    #startStatus { color: var(--muted); font-size: 14px; min-height: 20px; }
+    #startStatus.error { color: var(--bad); }
+
+    /* --- Play screen --- */
+    #playScreen { justify-content: flex-start; }
+    .playRow { flex: 1; width: 100%; display: flex; align-items: center; justify-content: space-around; padding: 0 6%; }
+
+    /* Tilt guide (illustrative, non-interactive) */
+    .guide { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+    .guide .tri { color: #7f8895; font-size: 30px; line-height: .8; }
+    .guide .lbl { color: var(--muted); font-size: 13px; }
+    .guide .mid { display: flex; align-items: center; gap: 10px; margin: 2px 0; }
+    .guide .center { font-size: 20px; font-weight: 800; text-align: center; line-height: 1.05; }
+    .guide .side { display: flex; align-items: center; gap: 6px; }
+
+    /* Player controls */
+    .control { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .colorCircle {
+      width: 150px; height: 150px; border-radius: 50%; border: none; cursor: pointer;
+      animation: blobIdle 3.4s ease-in-out infinite;
+    }
+    .colorCircle:active { animation: none; transform: scale(1.05, 0.9); }
+    .nameRow { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .nameRow .pencil { font-size: 16px; }
+    #nameLabel { font-size: 22px; font-weight: 800; }
+    #nameInput {
+      font: 800 22px -apple-system, sans-serif; background: #1b2028; color: var(--fg);
+      border: 1px solid #333b48; border-radius: 8px; padding: 4px 10px; width: 180px; text-align: center;
+    }
+    .track { width: 300px; max-width: 60vw; height: 18px; border-radius: 12px; background: var(--track); overflow: hidden; }
+    .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 12px; transition: width .18s linear; }
+
+    /* --- End screen --- */
+    #endScreen { justify-content: center; gap: 14px; }
+    .bigCircle { width: 140px; height: 140px; border-radius: 50%; animation: blobIdle 3.4s ease-in-out infinite; }
+    .endMsg { font-size: 26px; font-weight: 800; text-align: center; }
+    .endSub { color: var(--muted); font-size: 14px; margin-top: -10px; }
+
+    /* --- Color picker overlay --- */
+    .picker { position: absolute; inset: 0; z-index: 60; display: none; align-items: center; justify-content: center; background: rgba(8,10,14,.72); }
+    .picker.show { display: flex; }
+    .pickerInner { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; padding: 22px; background: #171b22; border: 1px solid #262c36; border-radius: 16px; }
+    .swatch { width: 56px; height: 56px; border-radius: 50%; border: 2px solid #ffffff22; cursor: pointer; }
+    .swatch:active { transform: scale(.94); }
+
+    /* --- How to Play --- */
+    .how-link {
+      appearance: none; background: none; border: none; cursor: pointer;
+      color: var(--muted); font-size: 14px; text-decoration: underline; padding: 4px 8px;
+    }
+    .how-link:active { opacity: .6; }
+    #howModal {
+      position: absolute; inset: 0; z-index: 70; display: none;
+      align-items: center; justify-content: center; background: rgba(8,10,14,.62);
+    }
+    #howModal.show { display: flex; }
+    .how-panel {
+      position: relative; background: #171b22; border: 1px solid #262c36;
+      border-radius: 16px; padding: 20px 26px; max-width: 82%;
+      box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    }
+    .how-panel h2 { margin: 0 0 12px; font-size: 20px; font-weight: 800; }
+    .how-panel ul { margin: 0; padding-left: 20px; }
+    .how-panel li { margin: 7px 0; line-height: 1.35; color: var(--fg); font-size: 14px; }
+    .how-close {
+      position: absolute; top: 8px; right: 12px; appearance: none; border: none;
+      background: none; color: var(--muted); font-size: 24px; line-height: 1; cursor: pointer;
+    }
+
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="pop"></canvas>
+
+    <!-- START -->
+    <section class="screen show" id="startScreen">
+      <img class="brand" src="/images/JellyBump.png" alt="JellyBump" />
+      <div class="hold">Hold the phone sideways — right edge up</div>
+      <div class="room" id="room"></div>
+      <button id="startBtn" class="big blobby">Tap to Join</button>
+      <button id="howBtn" class="how-link">How to Play</button>
+      <div id="startStatus"></div>
+    </section>
+
+    <!-- PLAY -->
+    <section class="screen" id="playScreen">
+      <img class="brand small" src="/images/JellyBump.png" alt="JellyBump" />
+      <div class="playRow">
+        <div class="guide">
+          <div class="lbl">Up</div>
+          <div class="tri">&#9650;</div>
+          <div class="mid">
+            <div class="side"><span class="lbl">Left</span><span class="tri">&#9664;</span></div>
+            <div class="center">Tilt<br>Phone</div>
+            <div class="side"><span class="tri">&#9654;</span><span class="lbl">Right</span></div>
+          </div>
+          <div class="tri">&#9660;</div>
+          <div class="lbl">Down</div>
+        </div>
+        <div class="control">
+          <button id="colorCircle" class="colorCircle blobby" aria-label="Change color"></button>
+          <div class="nameRow" id="nameRow">
+            <span class="pencil">&#9998;</span>
+            <span id="nameLabel">Player</span>
+          </div>
+          <div class="track"><div class="fill" id="barFill"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- WIN / LOSE -->
+    <section class="screen" id="endScreen">
+      <div class="bigCircle blobby" id="winCircle"></div>
+      <div class="endMsg" id="endMsg"></div>
+      <div class="endSub" id="endSub"></div>
+      <button id="playAgainBtn" class="big blobby hidden">Play Again</button>
+    </section>
+
+    <!-- COLOR PICKER -->
+    <div id="colorPicker" class="picker">
+      <div class="pickerInner" id="swatches"></div>
+    </div>
+
+    <!-- HOW TO PLAY -->
+    <div id="howModal">
+      <div class="how-panel">
+        <button class="how-close" id="howClose" aria-label="Close">&times;</button>
+        <h2>How to Play</h2>
+        <ul>
+          <li>Hold your phone sideways (right edge up) and tilt it left, right, up, down, to steer your blob</li>
+          <li>Bump NPC blobs to grow</li>
+          <li>Bump other players to grow even more</li>
+          <li>NPC blobs respawn as bombs — avoid their blast radius until they explode</li>
+          <li>First player to reach full jelly blob potential wins</li>
+          <li>Leaderboard keeps track of wins over the whole game session</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const params = new URLSearchParams(location.search);
+    const roomCode = (params.get('room') || '').toUpperCase();
+
+    const stage = document.getElementById('stage');
+    const startScreen = document.getElementById('startScreen');
+    const playScreen = document.getElementById('playScreen');
+    const endScreen = document.getElementById('endScreen');
+    const startBtn = document.getElementById('startBtn');
+    const startStatus = document.getElementById('startStatus');
+    const roomEl = document.getElementById('room');
+    const colorCircle = document.getElementById('colorCircle');
+    const nameRow = document.getElementById('nameRow');
+    const nameLabel = document.getElementById('nameLabel');
+    const barFill = document.getElementById('barFill');
+    const colorPicker = document.getElementById('colorPicker');
+    const swatches = document.getElementById('swatches');
+    const winCircle = document.getElementById('winCircle');
+    const endMsg = document.getElementById('endMsg');
+    const endSub = document.getElementById('endSub');
+    const playAgainBtn = document.getElementById('playAgainBtn');
+
+    // Curated palette for the picker (no lime — that's reserved for NPCs).
+    const PICKER_COLORS = [
+      '#4f9dff', '#3ddc84', '#ff6b6b', '#ffd166',
+      '#c77dff', '#ff8fab', '#2ec4b6', '#f79d65',
+      '#ffffff', '#9b8cff', '#ff5db1', '#5ad1ff',
+    ];
+
+    roomEl.innerHTML = roomCode ? `Room <b>${roomCode}</b>` : '';
+    function setStartStatus(t, cls) { startStatus.textContent = t; startStatus.className = cls || ''; }
+    if (!roomCode) { setStartStatus('No room code in the link. Re-scan the QR on the desktop.', 'error'); startBtn.disabled = true; }
+
+    function showScreen(el) {
+      for (const s of [startScreen, playScreen, endScreen]) s.classList.toggle('show', s === el);
+    }
+
+    // ---- Identity ----------------------------------------------------------
+    let myId = null, myColor = '#4f9dff', myName = 'Player';
+    function applyColor(c) {
+      myColor = c;
+      colorCircle.style.setProperty('--c', c);
+      barFill.style.background = c;
+      // Tap to Join + Play Again buttons take the player's blob color.
+      startBtn.style.setProperty('--c', c);
+      playAgainBtn.style.setProperty('--c', c);
+    }
+
+    // ---- Forced-landscape stage --------------------------------------------
+    function applyOrientation() {
+      const w = window.innerWidth, h = window.innerHeight;
+      if (h >= w) {
+        stage.style.width = h + 'px'; stage.style.height = w + 'px';
+        stage.style.transform = 'translate(-50%, -50%) rotate(90deg)';
+      } else {
+        stage.style.width = w + 'px'; stage.style.height = h + 'px';
+        stage.style.transform = 'translate(-50%, -50%) rotate(0deg)';
+      }
+      sizePop();
+    }
+    window.addEventListener('resize', applyOrientation);
+    window.addEventListener('orientationchange', applyOrientation);
+
+    // ---- Tilt state --------------------------------------------------------
+    let latest = { beta: 0, gamma: 0 };
+    let haveReading = false;
+    let usingMotionFallback = false;
+    let ws = null;
+    const SEND_HZ = 25;
+    // Held sideways (right edge up): device pitch = left/right, device roll = up/down.
+    const HORIZ_SIGN = 1;   // flip if left/right is reversed
+    const VERT_SIGN = 1;    // flip if forward/back (up/down) is reversed
+
+    function onOrientation(e) {
+      if (e.beta === null && e.gamma === null) return;
+      latest = { beta: e.beta || 0, gamma: e.gamma || 0 };
+      haveReading = true;
+    }
+    function onMotion(e) {
+      const g = e.accelerationIncludingGravity;
+      if (!g || (g.x === null && g.y === null && g.z === null)) return;
+      const x = g.x || 0, y = g.y || 0, z = g.z || 0;
+      latest = {
+        gamma: Math.atan2(x, Math.hypot(y, z)) * 180 / Math.PI,
+        beta: Math.atan2(y, Math.hypot(x, z)) * 180 / Math.PI,
+      };
+      haveReading = true;
+    }
+
+    async function requestPermissions() {
+      try {
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+          const res = await DeviceOrientationEvent.requestPermission();
+          if (res !== 'granted') return false;
+        }
+        if (typeof DeviceMotionEvent !== 'undefined' &&
+            typeof DeviceMotionEvent.requestPermission === 'function') {
+          try { await DeviceMotionEvent.requestPermission(); } catch {}
+        }
+        return true;
+      } catch (err) { console.error('permission error', err); return false; }
+    }
+    function startSensors() {
+      window.addEventListener('deviceorientation', onOrientation, true);
+      setTimeout(() => {
+        if (!haveReading && typeof DeviceMotionEvent !== 'undefined') {
+          usingMotionFallback = true;
+          window.addEventListener('devicemotion', onMotion, true);
+        }
+      }, 800);
+    }
+
+    // ---- Stay awake + survive drops ----------------------------------------
+    let started = false;              // true once the player has tapped Start
+    let wakeLock = null;
+    let reconnectTimer = null, reconnectDelay = 1000;
+    const tokenKey = 'jellybump:token:' + roomCode;
+    const getToken = () => { try { return localStorage.getItem(tokenKey); } catch { return null; } };
+    const setToken = (t) => { try { localStorage.setItem(tokenKey, t); } catch {} };
+
+    async function acquireWakeLock() {
+      // Keep the screen on so the phone doesn't sleep mid-game (needs a gesture +
+      // HTTPS; unsupported on older iOS — silently skipped there).
+      try {
+        if ('wakeLock' in navigator && document.visibilityState === 'visible') {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch { /* ignore */ }
+    }
+    function scheduleReconnect() {
+      if (reconnectTimer || !started) return;
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        if (started && (!ws || ws.readyState > WebSocket.OPEN)) connectSocket();
+      }, reconnectDelay);
+      reconnectDelay = Math.min(reconnectDelay * 1.7, 5000);
+    }
+
+    // ---- WebSocket ---------------------------------------------------------
+    function connectSocket() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      const sock = new WebSocket(`${proto}://${location.host}`);
+      ws = sock;
+      sock.addEventListener('open', () => {
+        if (ws !== sock) return;
+        reconnectDelay = 1000;
+        const token = getToken();
+        if (token) { setStartStatus('Reconnecting…'); sock.send(JSON.stringify({ type: 'rejoin', code: roomCode, token })); }
+        else { setStartStatus('Joining room…'); sock.send(JSON.stringify({ type: 'join', code: roomCode })); }
+      });
+      sock.addEventListener('message', (ev) => {
+        if (ws !== sock) return;
+        let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+        switch (msg.type) {
+          case 'joined':
+            myId = msg.id;
+            myName = msg.name || `Player ${msg.id}`;
+            nameLabel.textContent = myName;
+            applyColor(msg.color || myColor);
+            if (msg.token) setToken(msg.token);
+            showScreen(playScreen);
+            startStreaming();
+            break;
+          case 'rejoin-failed':
+            // Slot expired or unknown → join fresh (server issues a new token).
+            sock.send(JSON.stringify({ type: 'join', code: roomCode }));
+            break;
+          case 'error':
+            setStartStatus(msg.message || 'Could not join room.', 'error');
+            showScreen(startScreen); startBtn.classList.remove('hidden'); startBtn.disabled = false;
+            started = false;
+            break;
+          case 'progress':
+            barFill.style.width = (Math.max(0, Math.min(1, msg.value)) * 100).toFixed(1) + '%';
+            break;
+          case 'buzz':
+            if (navigator.vibrate) navigator.vibrate([0, 60, 35, 60]);
+            popConfetti();
+            break;
+          case 'game-over':
+            showEnd(msg);
+            break;
+          case 'game-reset':
+            showScreen(playScreen);
+            barFill.style.width = '0%';
+            break;
+          case 'peer-left':
+            setStartStatus('Desktop disconnected.', 'error');
+            break;
+        }
+      });
+      sock.addEventListener('close', () => {
+        if (ws !== sock || !started) return;
+        setStartStatus('Reconnecting…');
+        scheduleReconnect();
+      });
+      sock.addEventListener('error', () => { if (ws === sock) setStartStatus('Reconnecting…'); });
+    }
+
+    // Reacquire the wake lock (released on hide) and reconnect promptly when the
+    // player returns to the tab after it was backgrounded / the phone woke.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible' || !started) return;
+      acquireWakeLock();
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+        reconnectDelay = 1000;
+        connectSocket();
+      }
+    });
+
+    let sendTimer = null;
+    function startStreaming() {
+      if (sendTimer) return;
+      sendTimer = setInterval(() => {
+        if (!ws || ws.readyState !== WebSocket.OPEN || !haveReading) return;
+        // No calibration: tilt from flat is the direction. Device pitch drives
+        // left/right; device roll drives up/down.
+        const tx = HORIZ_SIGN * latest.beta;   // left/right
+        const ty = VERT_SIGN * latest.gamma;   // tip forward → up, back → down
+        ws.send(JSON.stringify({ type: 'tilt', tx, ty }));
+      }, 1000 / SEND_HZ);
+    }
+
+    // ---- Win / lose screen -------------------------------------------------
+    function showEnd(msg) {
+      const iWon = msg.winnerId === myId;
+      winCircle.style.setProperty('--c', msg.winnerColor);
+      if (iWon) {
+        endMsg.textContent = '🎉 You win!';
+        endSub.textContent = 'Congratulations — you burst first!';
+        playAgainBtn.classList.remove('hidden');
+      } else {
+        endMsg.textContent = `${msg.winnerName} wins`;
+        endSub.textContent = 'Better luck next round!';
+        playAgainBtn.classList.add('hidden');
+      }
+      showScreen(endScreen);
+    }
+    playAgainBtn.addEventListener('click', () => {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'play-again' }));
+    });
+
+    // ---- Start / calibrate -------------------------------------------------
+    startBtn.addEventListener('click', async () => {
+      startBtn.disabled = true;
+      setStartStatus('Requesting sensor access…');
+      const ok = await requestPermissions();
+      if (!ok) { setStartStatus('Motion access denied. Enable it in Settings and reload.', 'error'); startBtn.disabled = false; return; }
+      started = true;
+      acquireWakeLock();
+      startSensors();
+      connectSocket();
+    });
+
+    // ---- Color picker ------------------------------------------------------
+    for (const c of PICKER_COLORS) {
+      const s = document.createElement('button');
+      s.className = 'swatch'; s.style.background = c;
+      s.addEventListener('click', () => {
+        applyColor(c);
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'set-color', color: c }));
+        colorPicker.classList.remove('show');
+      });
+      swatches.appendChild(s);
+    }
+    colorCircle.addEventListener('click', () => colorPicker.classList.add('show'));
+    colorPicker.addEventListener('click', (e) => { if (e.target === colorPicker) colorPicker.classList.remove('show'); });
+
+    // ---- How to Play modal -------------------------------------------------
+    const howModal = document.getElementById('howModal');
+    document.getElementById('howBtn').addEventListener('click', () => howModal.classList.add('show'));
+    document.getElementById('howClose').addEventListener('click', () => howModal.classList.remove('show'));
+    howModal.addEventListener('click', (e) => { if (e.target === howModal) howModal.classList.remove('show'); });
+
+    // ---- Name editing ------------------------------------------------------
+    function beginEditName() {
+      if (document.getElementById('nameInput')) return;
+      const input = document.createElement('input');
+      input.id = 'nameInput'; input.type = 'text'; input.maxLength = 16; input.value = myName;
+      nameRow.replaceChildren(input);
+      input.focus(); input.select();
+      const commit = () => {
+        let n = input.value.replace(/\s+/g, ' ').trim().slice(0, 16) || myName;
+        myName = n;
+        nameRow.replaceChildren(
+          Object.assign(document.createElement('span'), { className: 'pencil', innerHTML: '&#9998;' }),
+          Object.assign(document.createElement('span'), { id: 'nameLabel', textContent: myName }),
+        );
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'set-name', name: myName }));
+      };
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); });
+      input.addEventListener('blur', commit, { once: true });
+    }
+    nameRow.addEventListener('click', beginEditName);
+
+    // ---- On-phone confetti -------------------------------------------------
+    const popCanvas = document.getElementById('pop');
+    const pctx = popCanvas.getContext('2d');
+    let pW = 0, pH = 0;
+    function sizePop() {
+      const pdpr = Math.min(window.devicePixelRatio || 1, 2);
+      pW = stage.clientWidth || window.innerWidth;
+      pH = stage.clientHeight || window.innerHeight;
+      popCanvas.width = Math.floor(pW * pdpr); popCanvas.height = Math.floor(pH * pdpr);
+      popCanvas.style.width = pW + 'px'; popCanvas.style.height = pH + 'px';
+      pctx.setTransform(pdpr, 0, 0, pdpr, 0, 0);
+    }
+    const confetti = [];
+    let confettiRAF = null, lastPop = 0;
+    function popConfetti() {
+      const palette = ['#ff6b6b', '#ffd166', '#3ddc84', '#4f9dff', '#c77dff', '#ff8fab', myColor];
+      const cx = pW / 2, cy = pH * 0.42;
+      for (let i = 0; i < 46; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = 160 + Math.random() * 340;
+        const life = 0.9 + Math.random() * 0.8;
+        confetti.push({
+          x: cx, y: cy, vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - 130,
+          life, maxLife: life, size: 5 + Math.random() * 6,
+          rot: Math.random() * Math.PI, vrot: (Math.random() - 0.5) * 16,
+          color: palette[Math.floor(Math.random() * palette.length)],
+        });
+      }
+      if (!confettiRAF) { lastPop = performance.now(); confettiRAF = requestAnimationFrame(popStep); }
+    }
+    function popStep(now) {
+      let dt = (now - lastPop) / 1000; lastPop = now; if (dt > 0.05) dt = 0.05;
+      pctx.clearRect(0, 0, pW, pH);
+      for (let i = confetti.length - 1; i >= 0; i--) {
+        const q = confetti[i];
+        q.vy += 950 * dt; q.vx *= (1 - 1.1 * dt);
+        q.x += q.vx * dt; q.y += q.vy * dt; q.rot += q.vrot * dt; q.life -= dt;
+        if (q.life <= 0) { confetti.splice(i, 1); continue; }
+        pctx.save();
+        pctx.globalAlpha = Math.max(0, Math.min(1, q.life / q.maxLife));
+        pctx.translate(q.x, q.y); pctx.rotate(q.rot);
+        pctx.fillStyle = q.color; pctx.fillRect(-q.size / 2, -q.size / 2, q.size, q.size * 0.6);
+        pctx.restore();
+      }
+      pctx.globalAlpha = 1;
+      if (confetti.length > 0) confettiRAF = requestAnimationFrame(popStep);
+      else { confettiRAF = null; pctx.clearRect(0, 0, pW, pH); }
+    }
+
+    applyOrientation();
+    applyColor(myColor);
+  </script>
+</body>
+</html>

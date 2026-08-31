@@ -1,0 +1,1036 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JELLYBUMP — Desktop</title>
+  <style>
+    :root {
+      --bg: #0e1116;
+      --panel: #171b22;
+      --fg: #e7ecf3;
+      --muted: #8b97a7;
+      --good: #3ddc84;
+      --bad: #ff6b6b;
+      --accent: #4f9dff;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; overflow: hidden; }
+    body {
+      background: var(--bg);
+      color: var(--fg);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #field { position: fixed; inset: 0; display: block; }
+
+    /* Persistent pairing card (top-right). Shrinks after the first player joins.
+       It is also a physical obstacle in the sim — blobs bounce off it. */
+    #card {
+      position: fixed;
+      top: 18px; right: 18px;
+      background: rgba(23, 27, 34, 0.92);
+      border: 1px solid #262c36;
+      border-radius: 14px;
+      padding: 16px 18px;
+      text-align: center;
+      backdrop-filter: blur(6px);
+      transition: padding .3s ease;
+      z-index: 10;
+      max-width: 260px;
+    }
+    #logo { display: block; width: 150px; max-width: 100%; margin: 0 auto 8px; }
+    #card.compact #logo { width: 118px; }
+
+    /* Big tagline logo, centered over the arena until the first phone joins. */
+    #tagline {
+      position: fixed; left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      width: 50vw; max-width: 900px;
+      pointer-events: none; z-index: 5;
+      filter: drop-shadow(0 10px 44px rgba(0, 0, 0, 0.55));
+    }
+    #tagline.hidden { display: none; }
+    .code {
+      display: none;   /* room code hidden — join is via QR only */
+      font-size: 30px; font-weight: 700; letter-spacing: 8px;
+      margin: 2px 0 4px; padding-left: 8px;
+      transition: font-size .3s ease;
+    }
+    #card.compact .code { font-size: 22px; letter-spacing: 6px; }
+    #qr {
+      background: #fff; padding: 8px; border-radius: 10px;
+      width: 200px; height: 200px; display: block; margin: 8px auto 0;
+      transition: width .3s ease, height .3s ease;
+    }
+    #card.compact #qr { width: 108px; height: 108px; padding: 6px; }
+    .hint { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+    /* Pre-start: show only the logo + START button; hide the QR until START. */
+    #card.prestart #code,
+    #card.prestart #qr,
+    #card.prestart #hint,
+    #card.prestart #status { display: none; }
+    #card:not(.prestart) #startBtn { display: none; }
+    #startBtn {
+      --c: var(--accent);
+      appearance: none; border: none; cursor: pointer;
+      color: #06122a; font-size: 20px; font-weight: 800; letter-spacing: .06em;
+      width: 200px; padding: 14px 0; border-radius: 40px; margin: 10px auto 4px; display: block;
+      position: relative; overflow: hidden;
+      background: var(--c);
+      background: radial-gradient(circle at 35% 30%,
+        color-mix(in srgb, var(--c), #fff 52%) 0%,
+        var(--c) 54%,
+        color-mix(in srgb, var(--c), #000 34%) 100%);
+      box-shadow: 0 6px 26px -8px var(--c), inset 0 -7px 16px -10px rgba(0,0,0,.55);
+      animation: blobIdle 2.6s ease-in-out infinite;
+    }
+    #startBtn::before {
+      content: ''; position: absolute; top: 12%; left: 17%; width: 44%; height: 38%;
+      border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle, rgba(255,255,255,.85), rgba(255,255,255,0) 68%);
+    }
+    #startBtn:active { animation: none; transform: scale(1.1, 0.82); }
+
+    /* How to Play — secondary button + modal */
+    #howBtn {
+      display: block; margin: 10px auto 0; appearance: none; cursor: pointer;
+      background: #222834; color: var(--fg); border: 1px solid #333b48;
+      border-radius: 10px; font-size: 12px; font-weight: 600; padding: 8px 14px;
+    }
+    #howBtn:active { transform: scale(0.98); }
+    #howModal {
+      position: fixed; inset: 0; z-index: 40; display: none;
+      align-items: center; justify-content: center;
+      background: rgba(8, 10, 14, 0.5); backdrop-filter: blur(2px);
+    }
+    #howModal.show { display: flex; }
+    .how-panel {
+      position: relative; background: var(--panel); border: 1px solid #262c36;
+      border-radius: 16px; padding: 26px 32px; max-width: 460px; width: 88%;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+    }
+    .how-panel h2 { margin: 0 0 16px; font-size: 22px; font-weight: 800; }
+    .how-panel ul { margin: 0; padding-left: 20px; }
+    .how-panel li { margin: 10px 0; line-height: 1.45; color: var(--fg); font-size: 15px; }
+    .how-close {
+      position: absolute; top: 10px; right: 14px; appearance: none; border: none;
+      background: none; color: var(--muted); font-size: 26px; line-height: 1; cursor: pointer;
+    }
+    .how-close:hover { color: var(--fg); }
+    #status {
+      margin-top: 10px; font-size: 12px; color: var(--muted);
+      padding: 4px 10px; border-radius: 999px; background: #10141a;
+      display: inline-block; border: 1px solid #262c36;
+    }
+    #status.connected { color: var(--good); border-color: #1f4d33; }
+    #status.disconnected { color: var(--bad); border-color: #4d1f1f; }
+
+    /* Leaderboard (bottom-left) — name + progress bar + win ratio per player. */
+    #hud {
+      position: fixed; left: 18px; bottom: 18px;
+      background: rgba(23, 27, 34, 0.82);
+      border: 1px solid #262c36; border-radius: 12px;
+      padding: 10px 14px; min-width: 250px; z-index: 10;
+      font-variant-numeric: tabular-nums;
+    }
+    #hud .title { color: var(--muted); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 8px; }
+    #hud .row { display: flex; align-items: center; gap: 9px; padding: 3px 0; }
+    #hud .dot { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 auto; }
+    #hud .name { width: 90px; flex: 0 0 auto; font-size: 12px; white-space: nowrap; overflow: hidden; }
+    #hud .track { flex: 1 1 auto; min-width: 90px; height: 9px; border-radius: 6px; background: #10141a; border: 1px solid #262c36; overflow: hidden; }
+    #hud .fill { height: 100%; width: 0%; border-radius: 6px; transition: width .12s linear; }
+    #hud .ratio { flex: 0 0 auto; width: 34px; text-align: right; font-size: 12px; color: var(--muted); }
+    #hud .empty { color: var(--muted); font-size: 12px; }
+
+    /* Winner overlay */
+    #overlay {
+      position: fixed; inset: 0; z-index: 30;
+      display: none; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+      background: rgba(8, 10, 14, 0.74); backdrop-filter: blur(4px);
+    }
+    #overlay.show { display: flex; }
+    #overlay .sw {
+      width: 96px; height: 96px; border-radius: 50%;
+      position: relative; overflow: hidden;
+      background: var(--c, var(--accent));
+      background: radial-gradient(circle at 35% 30%,
+        color-mix(in srgb, var(--c, var(--accent)), #fff 52%) 0%,
+        var(--c, var(--accent)) 54%,
+        color-mix(in srgb, var(--c, var(--accent)), #000 36%) 100%);
+      box-shadow: 0 0 50px -4px var(--c, var(--accent));
+      animation: blobIdle 3.4s ease-in-out infinite;
+    }
+    #overlay .sw::before {
+      content: ''; position: absolute; top: 15%; left: 20%; width: 40%; height: 34%;
+      border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle, rgba(255,255,255,.85), rgba(255,255,255,0) 70%);
+    }
+    #overlay .win { font-size: 34px; font-weight: 800; letter-spacing: .01em; }
+    #overlay .sub { color: var(--muted); margin-top: -10px; }
+    @keyframes blobIdle {
+      0%, 100% { transform: scale(1, 1) rotate(0deg); }
+      30% { transform: scale(1.035, 0.965) rotate(-1.2deg); }
+      60% { transform: scale(0.972, 1.028) rotate(1.2deg); }
+    }
+    #overlay button {
+      --c: var(--good);
+      appearance: none; border: none; cursor: pointer;
+      color: #06231a; font-size: 18px; font-weight: 800;
+      padding: 15px 36px; border-radius: 40px;
+      position: relative; overflow: hidden;
+      background: var(--c);
+      background: radial-gradient(circle at 35% 30%,
+        color-mix(in srgb, var(--c), #fff 52%) 0%,
+        var(--c) 54%,
+        color-mix(in srgb, var(--c), #000 34%) 100%);
+      box-shadow: 0 6px 26px -8px var(--c), inset 0 -7px 16px -10px rgba(0,0,0,.55);
+      animation: blobIdle 2.6s ease-in-out infinite;
+    }
+    #overlay button::before {
+      content: ''; position: absolute; top: 12%; left: 17%; width: 44%; height: 38%;
+      border-radius: 50%; pointer-events: none;
+      background: radial-gradient(circle, rgba(255,255,255,.85), rgba(255,255,255,0) 68%);
+    }
+    #overlay button:active { animation: none; transform: scale(1.1, 0.82); }
+  </style>
+</head>
+<body>
+  <canvas id="field"></canvas>
+
+  <img id="tagline" src="/images/JellyBump_Tagline.png" alt="JellyBump" />
+
+  <div id="card" class="prestart">
+    <img id="logo" src="/images/JellyBump.png" alt="JellyBump" />
+    <button id="startBtn">START</button>
+    <div class="code" id="code">····</div>
+    <img id="qr" alt="QR code to join" />
+    <div class="hint" id="hint">Scan to join</div>
+    <div id="status">Connecting…</div>
+    <button id="howBtn">How to Play</button>
+  </div>
+
+  <div id="howModal">
+    <div class="how-panel">
+      <button class="how-close" id="howClose" aria-label="Close">&times;</button>
+      <h2>How to Play</h2>
+      <ul>
+        <li>Hold your phone sideways (right edge up) and tilt it left, right, up, down, to steer your blob</li>
+        <li>Bump NPC blobs to grow</li>
+        <li>Bump other players to grow even more</li>
+        <li>NPC blobs respawn as bombs — avoid their blast radius until they explode</li>
+        <li>First player to reach full jelly blob potential wins</li>
+        <li>Leaderboard keeps track of wins over the whole game session</li>
+      </ul>
+    </div>
+  </div>
+
+  <div id="hud">
+    <div class="title">Leaderboard</div>
+    <div id="hudRows"><div class="empty">No one connected yet</div></div>
+  </div>
+
+  <div id="overlay">
+    <div class="sw" id="winSw"></div>
+    <div class="win" id="winText">Winner!</div>
+    <div class="sub">First blob to burst wins the round.</div>
+    <button id="newGame">Play Again</button>
+  </div>
+
+  <script>
+    // ---- DOM ----------------------------------------------------------------
+    const canvas = document.getElementById('field');
+    const ctx = canvas.getContext('2d');
+    const card = document.getElementById('card');
+    const codeEl = document.getElementById('code');
+    const qrEl = document.getElementById('qr');
+    const hintEl = document.getElementById('hint');
+    const statusEl = document.getElementById('status');
+    const taglineEl = document.getElementById('tagline');
+    const startBtn = document.getElementById('startBtn');
+    // START reveals the QR (already generated on load). It's also the desktop's
+    // audio-unlock gesture, so the music (started on the first join) can play.
+    startBtn.addEventListener('click', () => { card.classList.remove('prestart'); });
+
+    // How-to-Play modal (game keeps running behind it).
+    const howModal = document.getElementById('howModal');
+    document.getElementById('howBtn').addEventListener('click', () => howModal.classList.add('show'));
+    document.getElementById('howClose').addEventListener('click', () => howModal.classList.remove('show'));
+    howModal.addEventListener('click', (e) => { if (e.target === howModal) howModal.classList.remove('show'); });
+
+    // ---- Sounds -------------------------------------------------------------
+    const SND = {
+      userBump: new Audio('/sound/user-bump.mp3'),
+      npcBump: new Audio('/sound/npc-bump.mp3'),
+      bomb: new Audio('/sound/bomb.mp3'),
+      win: new Audio('/sound/win.mp3'),
+    };
+    for (const a of Object.values(SND)) a.preload = 'auto';
+    function playSound(a) {
+      try { const s = a.cloneNode(true); s.volume = 0.5; s.play().catch(() => {}); } catch { /* ignore */ }
+    }
+
+    // Looping background music at half volume; stops on a win, restarts on Play Again.
+    const music = new Audio('/sound/soundtrack.mp3');
+    music.loop = true;
+    music.volume = 0.5;
+    music.preload = 'auto';
+    function startMusic() { try { music.currentTime = 0; music.play().catch(() => {}); } catch { /* ignore */ } }
+    function stopMusic() { try { music.pause(); } catch { /* ignore */ } }
+    // Browsers block audio until a user gesture — prime the clips on first click/key.
+    function unlockAudio() {
+      for (const a of Object.values(SND)) {
+        a.muted = true;
+        a.play().then(() => { a.pause(); a.currentTime = 0; a.muted = false; }).catch(() => { a.muted = false; });
+      }
+      window.removeEventListener('pointerdown', unlockAudio);
+      window.removeEventListener('keydown', unlockAudio);
+    }
+    window.addEventListener('pointerdown', unlockAudio);
+    window.addEventListener('keydown', unlockAudio);
+    const hud = document.getElementById('hud');
+    const hudRows = document.getElementById('hudRows');
+    const overlay = document.getElementById('overlay');
+    const winSw = document.getElementById('winSw');
+    const winText = document.getElementById('winText');
+
+    function setStatus(text, cls) { statusEl.textContent = text; statusEl.className = cls || ''; }
+
+    // ---- Canvas sizing ------------------------------------------------------
+    let W = 0, H = 0, dpr = 1;
+    function resize() {
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth; H = window.innerHeight;
+      canvas.width = Math.floor(W * dpr);
+      canvas.height = Math.floor(H * dpr);
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (const b of allBlobs()) {
+        b.x = Math.max(b.r, Math.min(W - b.r, b.x));
+        b.y = Math.max(b.r, Math.min(H - b.r, b.y));
+      }
+    }
+    window.addEventListener('resize', resize);
+
+    // ---- Tuning -------------------------------------------------------------
+    const MAX_SPEED = 520;      // hard cap on a blob's speed
+    const RESTITUTION = 0.82;   // energy kept on a bounce
+    // Marble-style user control: tilt sets an acceleration DIRECTION (forward→up,
+    // back→down, left/right → left/right). Holding a steady direction builds
+    // speed; changing direction bleeds it off via friction.
+    const ACCEL = 380;          // px/s² at full tilt
+    const FRICTION = 0.8;       // per second; terminal speed ≈ ACCEL/FRICTION
+    const TILT_DEADZONE = 3;    // degrees of tilt ignored
+    const TILT_REF = 22;        // degrees of tilt for full acceleration
+    const MOVING_MIN = 25;      // min speed (px/s) to count as "moving": only a
+                                // moving blob can pop NPCs or grow on a bump
+
+    // Gameplay
+    const USER_START_R = 15;
+    const GROW_COLLISION = 1.35;  // faster user grows this much (AREA) on user↔user
+    const GROW_NPC = 1.15;        // user grows this (AREA) when it pops an NPC
+    const MAX_SCALE = 62.5;       // area multiple at which a user explodes (wins) — 25% bigger than before
+    const SHRINK_BOMB = 0.5;      // area multiple applied to users caught in a blast
+    const MIN_SCALE = 1;          // users never shrink below their starting size
+
+    const NPC_COUNT = 25;         // always 25 NPCs, regardless of screen size
+    const NPC_COLOR = '#b6ff3d';  // lime — never assigned to a user (see server PALETTE)
+    const NPC_R = 15;
+    const NPC_SPEED_MIN = 50, NPC_SPEED_MAX = 105;
+    const NPC_RESPAWN_MS = 5000;  // an NPC returns as a bomb on every other pop
+    const BOMB_FUSE_MS = 3000;      // a bomb explodes on its own after this long
+    const BOMB_BLINK_PERIOD = 0.32; // seconds per half-blink
+    const BOMB_CHASE_SPEED = 45;    // px/s — bombs slowly home in on the nearest user
+    const BOMB_DARK = '#5a0d0d', BOMB_BRIGHT = '#ff2a2a';
+    const BOMB_BLAST_R = () => NPC_R * 4; // blast radius (2× the NPC radius)
+
+    // ---- Color helpers ------------------------------------------------------
+    function hexToRgb(hex) {
+      hex = hex.replace('#', '');
+      if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+      const n = parseInt(hex, 16);
+      return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+    }
+    const mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    const rgba = (c, a) => `rgba(${c[0] | 0},${c[1] | 0},${c[2] | 0},${a})`;
+
+    // ---- Blob model ---------------------------------------------------------
+    // Shared shape for users + NPCs.
+    const players = new Map();  // id -> user blob
+    const npcs = [];            // fixed array of NPC blobs
+
+    function updateR(b) { b.r = b.baseR * Math.sqrt(b.scale); }
+
+    function makeBlob(kind, color, x, y, extra) {
+      const b = {
+        kind, color, _rgb: hexToRgb(color),
+        x, y,
+        heading: Math.random() * Math.PI * 2,
+        speed: kind === 'user' ? 0 : (NPC_SPEED_MIN + Math.random() * (NPC_SPEED_MAX - NPC_SPEED_MIN)),
+        baseR: kind === 'user' ? USER_START_R : NPC_R,
+        scale: 1,
+        wobble: Math.random() * Math.PI * 2,
+        squash: 0, squashVel: 0, squashAngle: 0,
+        ...extra,
+      };
+      updateR(b);
+      return b;
+    }
+    function setColor(b, hex) { b.color = hex; b._rgb = hexToRgb(hex); }
+
+    function* allBlobs() {
+      for (const u of players.values()) if (!u.exploded) yield u;
+      for (const n of npcs) if (n.state !== 'dead') yield n;
+    }
+
+    // ---- Spawns (avoid the QR panel) ---------------------------------------
+    function randomPos(r) {
+      let x, y, tries = 0;
+      do {
+        x = r + Math.random() * (W - r * 2);
+        y = r + Math.random() * (H - r * 2);
+        tries++;
+      } while (tries < 40 && (
+        (qrRect && pointNearRect(x, y, r + 8, qrRect)) ||
+        (hudRect && pointNearRect(x, y, r + 8, hudRect))
+      ));
+      return { x, y };
+    }
+    function pointNearRect(x, y, pad, rc) {
+      return x > rc.left - pad && x < rc.right + pad && y > rc.top - pad && y < rc.bottom + pad;
+    }
+    // Best-effort spot for a bomb: try to place it so no active player is already
+    // inside its blast radius (fall back to the roomiest spot found).
+    function bombSpawnPos() {
+      const blast = BOMB_BLAST_R();
+      let bestPos = null, bestClear = -Infinity;
+      for (let i = 0; i < 40; i++) {
+        const p = randomPos(NPC_R);
+        let minClear = Infinity;
+        for (const u of players.values()) {
+          if (u.exploded || u.paused) continue;
+          minClear = Math.min(minClear, Math.hypot(p.x - u.x, p.y - u.y) - u.r);
+        }
+        if (minClear > blast) return p;                 // clear of every player
+        if (minClear > bestClear) { bestClear = minClear; bestPos = p; }
+      }
+      return bestPos || randomPos(NPC_R);
+    }
+
+    function addPlayer(id, color, name) {
+      const p = randomPos(USER_START_R);
+      const b = makeBlob('user', color, p.x, p.y, { scale: 1, exploded: false });
+      b.id = id; b.name = name || `Player ${id}`;
+      b.speed = 0; b.tx = 0; b.ty = 0;
+      b.wins = 0;
+      players.set(id, b);
+      rebuildHud();
+    }
+    function removePlayer(id) { players.delete(id); touching.clear(); rebuildHud(); }
+
+    function initNpcs() {
+      npcs.length = 0;
+      for (let i = 0; i < NPC_COUNT; i++) {
+        const p = randomPos(NPC_R);
+        npcs.push(makeBlob('npc', NPC_COLOR, p.x, p.y, {
+          state: 'roam', popCount: 0, respawnAt: 0,
+          blinks: 0, blinkTimer: 0, blinkOn: false,
+        }));
+      }
+    }
+
+    function respawnNpc(n, asBomb) {
+      const p = asBomb ? bombSpawnPos() : randomPos(NPC_R);
+      n.x = p.x; n.y = p.y;
+      n.scale = 1; updateR(n);
+      n.squash = 0; n.squashVel = 0;
+      if (asBomb) {
+        n.state = 'bomb'; n.speed = 0;
+        n.blinkTimer = 0; n.blinkOn = false;
+        n.bombAt = performance.now();         // 3s self-destruct fuse starts now
+        setColor(n, BOMB_DARK);
+      } else {
+        n.state = 'roam';
+        n.heading = Math.random() * Math.PI * 2;
+        n.speed = NPC_SPEED_MIN + Math.random() * (NPC_SPEED_MAX - NPC_SPEED_MIN);
+        // popCount is NOT reset — the every-other-pop bomb cadence needs the
+        // running total to persist across respawns.
+        setColor(n, NPC_COLOR);
+      }
+    }
+
+    // ---- HUD (growth bars) --------------------------------------------------
+    const hudFills = new Map();
+    const hudDots = new Map();
+    const hudRowsEls = new Map();
+    const hudNames = new Map();
+    const hudRatios = new Map();
+    const truncName = (n) => (n && n.length > 12 ? n.slice(0, 12) + '…' : (n || ''));
+    function rebuildHud() {
+      hudFills.clear();
+      hudDots.clear();
+      hudRowsEls.clear();
+      hudNames.clear();
+      hudRatios.clear();
+      if (players.size === 0) {
+        hudRows.innerHTML = '<div class="empty">No one connected yet</div>';
+        setStatus('Waiting for phone…');
+        card.classList.remove('compact');
+        hintEl.textContent = 'Scan to join';
+        taglineEl.classList.remove('hidden');   // big logo over the arena
+        return;
+      }
+      setStatus(players.size === 1 ? '1 connected' : `${players.size} connected`, 'connected');
+      card.classList.add('compact');
+      hintEl.textContent = 'Scan to add another player';
+      taglineEl.classList.add('hidden');
+      hudRows.innerHTML = '';
+      // Rank by wins (desc), stable by id — reorders when someone wins a round.
+      const ranked = [...players.entries()].sort((A, B) => ((B[1].wins || 0) - (A[1].wins || 0)) || (A[0] - B[0]));
+      for (const [id, u] of ranked) {
+        const row = document.createElement('div'); row.className = 'row';
+        const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = u.color;
+        const name = document.createElement('span'); name.className = 'name'; name.textContent = truncName(u.name);
+        const track = document.createElement('div'); track.className = 'track';
+        const fill = document.createElement('div'); fill.className = 'fill'; fill.style.background = u.color;
+        const ratio = document.createElement('span'); ratio.className = 'ratio';
+        track.appendChild(fill);
+        row.appendChild(dot); row.appendChild(name); row.appendChild(track); row.appendChild(ratio);
+        hudRows.appendChild(row);
+        hudFills.set(id, fill); hudDots.set(id, dot); hudRowsEls.set(id, row);
+        hudNames.set(id, name); hudRatios.set(id, ratio);
+      }
+    }
+    function updateHud() {
+      for (const [id, u] of players) {
+        const fill = hudFills.get(id);
+        if (fill) fill.style.width = (progressOf(u) * 100).toFixed(1) + '%';
+        const row = hudRowsEls.get(id);
+        if (row) row.style.opacity = u.paused ? '0.4' : '1';
+        const name = hudNames.get(id);
+        if (name) name.textContent = truncName(u.name);
+        // Win ratio = wins / total rounds played; appears after the first round.
+        const ratio = hudRatios.get(id);
+        if (ratio) ratio.textContent = (gamesPlayed > 0) ? `${u.wins || 0}/${gamesPlayed}` : '';
+      }
+    }
+
+    // ---- Particles / confetti / explosions ---------------------------------
+    const particles = [];
+    function burst(x, y, colors, count, power) {
+      const palette = colors;
+      for (let i = 0; i < count; i++) {
+        const ang = Math.random() * Math.PI * 2;
+        const spd = power * (0.4 + Math.random());
+        const life = 0.9 + Math.random() * 0.7;
+        particles.push({
+          x, y,
+          vx: Math.cos(ang) * spd, vy: Math.sin(ang) * spd - power * 0.25,
+          life, maxLife: life,
+          size: 3 + Math.random() * 4,
+          rot: Math.random() * Math.PI, vrot: (Math.random() - 0.5) * 14,
+          color: palette[Math.floor(Math.random() * palette.length)],
+        });
+      }
+    }
+    function updateParticles(dt) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const q = particles[i];
+        q.vy += 560 * dt; q.vx *= (1 - 1.3 * dt);
+        q.x += q.vx * dt; q.y += q.vy * dt;
+        q.rot += q.vrot * dt; q.life -= dt;
+        if (q.life <= 0) particles.splice(i, 1);
+      }
+    }
+
+    // ---- Deformation --------------------------------------------------------
+    function applySquash(b, angle, amount) {
+      b.squash = amount; b.squashVel = 0; b.squashAngle = angle;
+    }
+    function updateDeform(b, dt) {
+      // Underdamped spring back to round → jelly wobble.
+      const k = 200, damp = 7;
+      b.squashVel += (-k * b.squash) * dt;
+      b.squashVel *= Math.exp(-damp * dt);
+      b.squash += b.squashVel * dt;
+      if (Math.abs(b.squash) < 0.001 && Math.abs(b.squashVel) < 0.001) { b.squash = 0; b.squashVel = 0; }
+    }
+
+    // ---- Motion / bounce helpers -------------------------------------------
+    function bounceAway(b, nx, ny) {
+      const vx = Math.cos(b.heading), vy = Math.sin(b.heading);
+      const dot = vx * nx + vy * ny;
+      let rx = vx, ry = vy;
+      if (dot < 0) { rx = vx - 2 * dot * nx; ry = vy - 2 * dot * ny; }
+      rx += nx * 0.2; ry += ny * 0.2;
+      b.heading = Math.atan2(ry, rx);
+    }
+
+    function wallBounce(b) {
+      if (b.x < b.r) { b.x = b.r; b.heading = Math.PI - b.heading; b.speed *= RESTITUTION; applySquash(b, 0, 0.28); }
+      else if (b.x > W - b.r) { b.x = W - b.r; b.heading = Math.PI - b.heading; b.speed *= RESTITUTION; applySquash(b, Math.PI, 0.28); }
+      if (b.y < b.r) { b.y = b.r; b.heading = -b.heading; b.speed *= RESTITUTION; applySquash(b, Math.PI / 2, 0.28); }
+      else if (b.y > H - b.r) { b.y = H - b.r; b.heading = -b.heading; b.speed *= RESTITUTION; applySquash(b, -Math.PI / 2, 0.28); }
+    }
+
+    // On-screen panels blobs bounce off (QR card + leaderboard), refreshed each frame.
+    let qrRect = null, hudRect = null;
+    function obstacleBounce(b) { rectBounce(b, qrRect); rectBounce(b, hudRect); }
+    function rectBounce(b, rect) {
+      if (!rect) return;
+      const cx = Math.max(rect.left, Math.min(b.x, rect.right));
+      const cy = Math.max(rect.top, Math.min(b.y, rect.bottom));
+      let nx = b.x - cx, ny = b.y - cy;
+      let d = Math.hypot(nx, ny);
+      if (d >= b.r) return;
+      if (d < 0.0001) {
+        // Center inside the panel: eject toward the nearest edge.
+        const dl = b.x - rect.left, dr = rect.right - b.x, dt2 = b.y - rect.top, db = rect.bottom - b.y;
+        const m = Math.min(dl, dr, dt2, db);
+        if (m === dl) { nx = -1; ny = 0; } else if (m === dr) { nx = 1; ny = 0; }
+        else if (m === dt2) { nx = 0; ny = -1; } else { nx = 0; ny = 1; }
+        b.x = (nx < 0 ? rect.left : nx > 0 ? rect.right : b.x) + nx * b.r;
+        b.y = (ny < 0 ? rect.top : ny > 0 ? rect.bottom : b.y) + ny * b.r;
+      } else {
+        nx /= d; ny /= d;
+        b.x = cx + nx * b.r; b.y = cy + ny * b.r;
+      }
+      bounceAway(b, nx, ny); b.speed *= RESTITUTION; applySquash(b, Math.atan2(ny, nx), 0.28);
+    }
+
+    // ---- Growth / explosions ------------------------------------------------
+    let gameOver = false;
+    let gamesPlayed = 0;   // total rounds finished this session (leaderboard denominator)
+    // Growth is multiplicative (each hit ×1.25/×1.5 area), so map progress on a
+    // LOG scale — each hit then advances the bar by a roughly constant amount
+    // instead of crawling early and leaping at the end.
+    function progressOf(u) { return Math.max(0, Math.min(1, Math.log(u.scale) / Math.log(MAX_SCALE))); }
+    function sendProgress(u) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'progress', id: u.id, value: progressOf(u) }));
+      }
+    }
+    function growUser(u, areaMult) {
+      if (gameOver || u.exploded) return;
+      u.scale *= areaMult;
+      updateR(u);
+      applySquash(u, Math.random() * Math.PI, 0.3);
+      sendProgress(u);
+      if (u.scale >= MAX_SCALE) explodeUser(u);
+    }
+    function shrinkUser(u) {
+      u.scale = Math.max(MIN_SCALE, u.scale * SHRINK_BOMB);
+      updateR(u);
+      applySquash(u, Math.random() * Math.PI, 0.35);
+      sendProgress(u);
+    }
+    function explodeUser(u) {
+      u.scale = MAX_SCALE; updateR(u);
+      burst(u.x, u.y, [u.color, u.color], 90, 520);
+      u.exploded = true;
+      // Tally the round: one more game played total; the burster won it.
+      gamesPlayed += 1;
+      u.wins = (u.wins || 0) + 1;
+      rebuildHud(); updateHud();   // re-rank the leaderboard by the new win totals
+      sendProgress(u);
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'game-over', winnerId: u.id }));
+      endGame(u.color, u.name);
+    }
+    function popNpc(n, user) {
+      playSound(SND.npcBump);
+      burst(n.x, n.y, [user.color, NPC_COLOR], 24, 300);
+      n.state = 'dead';
+      n.popCount += 1;
+      n.respawnAt = performance.now() + NPC_RESPAWN_MS;
+    }
+    function explodeBomb(n) {
+      burst(n.x, n.y, [BOMB_BRIGHT, BOMB_DARK], 60, 460);
+      const blast = BOMB_BLAST_R();
+      let hitUser = false;
+      for (const u of players.values()) {
+        if (u.exploded) continue;
+        if (Math.hypot(u.x - n.x, u.y - n.y) <= blast + u.r) { shrinkUser(u); hitUser = true; }
+      }
+      playSound(hitUser ? SND.bomb : SND.npcBump);
+      respawnNpc(n, false); // returns as a fresh normal NPC
+    }
+
+    // ---- Collisions ---------------------------------------------------------
+    const touching = new Set(); // rising-edge tracker for user↔user growth
+    const pairKey = (a, b) => [String(a), String(b)].sort().join('|');
+
+    function handleCollisions() {
+      const active = [];
+      for (const [id, u] of players) if (!u.exploded && !u.paused) active.push([id, u]);
+      npcs.forEach((n, i) => { if (n.state === 'roam') active.push(['npc' + i, n]); });
+
+      for (let i = 0; i < active.length; i++) {
+        for (let j = i + 1; j < active.length; j++) {
+          const [idA, a] = active[i], [idB, b] = active[j];
+          const dx = b.x - a.x, dy = b.y - a.y;
+          const dist = Math.hypot(dx, dy) || 0.0001;
+          const minDist = a.r + b.r;
+          const key = pairKey(idA, idB);
+          if (dist >= minDist) { touching.delete(key); continue; }
+
+          const nx = dx / dist, ny = dy / dist;
+          const aUser = a.kind === 'user', bUser = b.kind === 'user';
+
+          if (aUser && bUser) {
+            const aSpeed0 = a.speed, bSpeed0 = b.speed; // speeds before the bounce
+            const overlap = minDist - dist;
+            a.x -= nx * overlap / 2; a.y -= ny * overlap / 2;
+            b.x += nx * overlap / 2; b.y += ny * overlap / 2;
+            bounceAway(a, -nx, -ny); bounceAway(b, nx, ny);
+            a.speed *= RESTITUTION; b.speed *= RESTITUTION;
+            applySquash(a, Math.atan2(-ny, -nx), 0.34); applySquash(b, Math.atan2(ny, nx), 0.34);
+            if (!touching.has(key)) {
+              touching.add(key);
+              playSound(SND.userBump);
+              // Both blobs grow (each only if it was actually moving — an idle
+              // blob doesn't grow). Confetti mixes both blobs' colors.
+              let grew = false;
+              if (aSpeed0 >= MOVING_MIN) { growUser(a, GROW_COLLISION); grew = true; }
+              if (bSpeed0 >= MOVING_MIN) { growUser(b, GROW_COLLISION); grew = true; }
+              if (grew) {
+                burst((a.x + b.x) / 2, (a.y + b.y) / 2, [a.color, b.color], 30, 300);
+                if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'buzz', ids: [idA, idB] }));
+              }
+            }
+          } else if (aUser !== bUser) {
+            // one user, one roaming NPC
+            const user = aUser ? a : b, npc = aUser ? b : a;
+            const uid = aUser ? idA : idB;
+            if (user.speed >= MOVING_MIN) {
+              // moving user → pop the NPC and grow
+              popNpc(npc, user);
+              growUser(user, GROW_NPC);
+              applySquash(user, Math.atan2(ny, nx), 0.3);
+              if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'buzz', ids: [uid] }));
+            } else {
+              // idle user → just bounce off; the NPC survives
+              const overlap = minDist - dist;
+              a.x -= nx * overlap / 2; a.y -= ny * overlap / 2;
+              b.x += nx * overlap / 2; b.y += ny * overlap / 2;
+              bounceAway(a, -nx, -ny); bounceAway(b, nx, ny);
+              a.speed *= RESTITUTION; b.speed *= RESTITUTION;
+              applySquash(a, Math.atan2(-ny, -nx), 0.28); applySquash(b, Math.atan2(ny, nx), 0.28);
+            }
+          } else {
+            // NPC ↔ NPC → just bounce
+            const overlap = minDist - dist;
+            a.x -= nx * overlap / 2; a.y -= ny * overlap / 2;
+            b.x += nx * overlap / 2; b.y += ny * overlap / 2;
+            bounceAway(a, -nx, -ny); bounceAway(b, nx, ny);
+            a.speed *= RESTITUTION; b.speed *= RESTITUTION;
+          }
+        }
+      }
+    }
+
+    // ---- Simulation loop ----------------------------------------------------
+    let last = performance.now();
+    let hudAccum = 0;
+    function step(now) {
+      let dt = (now - last) / 1000;
+      last = now;
+      if (dt > 0.05) dt = 0.05;
+
+      qrRect = card.getBoundingClientRect();
+      hudRect = hud.getBoundingClientRect();
+
+      if (!gameOver) {
+        // Users: marble control. Tilt accelerates the blob in a direction;
+        // going straight builds speed, turning bleeds it off (via friction).
+        for (const u of players.values()) {
+          if (u.exploded || u.paused) continue;
+          let vx = Math.cos(u.heading) * u.speed;
+          let vy = Math.sin(u.heading) * u.speed;
+          const tmag = Math.hypot(u.tx || 0, u.ty || 0);
+          if (tmag > TILT_DEADZONE) {
+            const k = (Math.min(1, tmag / TILT_REF) / tmag) * ACCEL * dt;
+            vx += (u.tx) * k;        // left/right
+            vy += (-u.ty) * k;       // tip forward (ty>0) → up (screen −y)
+          }
+          const fr = Math.max(0, 1 - FRICTION * dt);
+          vx *= fr; vy *= fr;
+          let sp = Math.hypot(vx, vy);
+          if (sp > MAX_SPEED) { const c = MAX_SPEED / sp; vx *= c; vy *= c; sp = MAX_SPEED; }
+          if (sp > 0.001) u.heading = Math.atan2(vy, vx);
+          u.speed = sp;
+          u.x += vx * dt; u.y += vy * dt;
+          wallBounce(u); obstacleBounce(u);
+        }
+
+        // NPCs: roam / respawn / bomb countdown.
+        for (const n of npcs) {
+          if (n.state === 'dead') {
+            // Every other pop, the NPC comes back as a bomb — starting with the
+            // first pop (popCount starts at 0, so bombs land on odd pops: 1st, 3rd…).
+            if (now >= n.respawnAt) respawnNpc(n, n.popCount % 2 === 1);
+            continue;
+          }
+          if (n.state === 'roam') {
+            n.heading += (Math.random() - 0.5) * 2.0 * dt; // gentle wander
+            n.x += Math.cos(n.heading) * n.speed * dt;
+            n.y += Math.sin(n.heading) * n.speed * dt;
+            wallBounce(n); obstacleBounce(n);
+          } else if (n.state === 'bomb') {
+            // Find the nearest active user.
+            let target = null, best = Infinity;
+            for (const u of players.values()) {
+              if (u.exploded || u.paused) continue;
+              const d = Math.hypot(u.x - n.x, u.y - n.y);
+              if (d < best) { best = d; target = u; }
+            }
+            // Any player inside the blast radius detonates it immediately.
+            if (target && best <= BOMB_BLAST_R() + target.r) { explodeBomb(n); continue; }
+            // Self-destruct after the fuse regardless.
+            if (now - n.bombAt >= BOMB_FUSE_MS) { explodeBomb(n); continue; }
+            // Otherwise slowly home in on that user.
+            if (target) {
+              n.heading = Math.atan2(target.y - n.y, target.x - n.x);
+              n.speed = BOMB_CHASE_SPEED;
+              n.x += Math.cos(n.heading) * n.speed * dt;
+              n.y += Math.sin(n.heading) * n.speed * dt;
+              wallBounce(n); obstacleBounce(n);
+            }
+            n.blinkTimer += dt;
+            if (n.blinkTimer >= BOMB_BLINK_PERIOD) {
+              n.blinkTimer -= BOMB_BLINK_PERIOD;
+              n.blinkOn = !n.blinkOn;
+              setColor(n, n.blinkOn ? BOMB_BRIGHT : BOMB_DARK);
+              if (n.blinkOn) applySquash(n, 0, 0.25);
+            }
+          }
+        }
+
+        handleCollisions();
+      }
+
+      for (const b of allBlobs()) updateDeform(b, dt);
+      updateParticles(dt);
+
+      hudAccum += dt;
+      if (hudAccum >= 0.1) { updateHud(); hudAccum = 0; }
+
+      draw(now / 1000);
+      requestAnimationFrame(step);
+    }
+
+    // ---- Rendering ----------------------------------------------------------
+    function blobPath(b, t) {
+      const N = 24;
+      const speedFrac = Math.min(1, b.speed / MAX_SPEED);
+      const stretch = 1 + 0.22 * speedFrac;            // along heading
+      const squish = 1 / stretch;                       // perpendicular (area-ish preserved)
+      const hx = Math.cos(b.heading), hy = Math.sin(b.heading);
+      const sq = b.squash, sax = Math.cos(b.squashAngle), say = Math.sin(b.squashAngle);
+      const sPar = Math.max(0.35, 1 - sq), sPerp = 1 + 0.6 * sq;
+
+      const pts = [];
+      for (let i = 0; i < N; i++) {
+        const ang = (i / N) * Math.PI * 2;
+        const wob = 1 + 0.05 * Math.sin(ang * 3 + t * 2 + b.wobble) + 0.03 * Math.sin(ang * 2 - t * 1.7 + b.wobble);
+        let vx = Math.cos(ang) * b.r * wob, vy = Math.sin(ang) * b.r * wob;
+        // speed stretch along heading
+        let par = vx * hx + vy * hy;
+        let perx = vx - par * hx, pery = vy - par * hy;
+        vx = hx * par * stretch + perx * squish; vy = hy * par * stretch + pery * squish;
+        // impact squash along squashAngle
+        par = vx * sax + vy * say;
+        perx = vx - par * sax; pery = vy - par * say;
+        vx = sax * par * sPar + perx * sPerp; vy = say * par * sPar + pery * sPerp;
+        pts.push([b.x + vx, b.y + vy]);
+      }
+      ctx.beginPath();
+      let mx = (pts[N - 1][0] + pts[0][0]) / 2, my = (pts[N - 1][1] + pts[0][1]) / 2;
+      ctx.moveTo(mx, my);
+      for (let i = 0; i < N; i++) {
+        const p = pts[i], nxt = pts[(i + 1) % N];
+        ctx.quadraticCurveTo(p[0], p[1], (p[0] + nxt[0]) / 2, (p[1] + nxt[1]) / 2);
+      }
+      ctx.closePath();
+    }
+
+    function drawBlob(b, t) {
+      const rgb = b._rgb, r = b.r;
+      // Soft glow halo.
+      const halo = ctx.createRadialGradient(b.x, b.y, r * 0.4, b.x, b.y, r * 1.7);
+      halo.addColorStop(0, rgba(rgb, 0.30));
+      halo.addColorStop(1, rgba(rgb, 0));
+      ctx.fillStyle = halo;
+      ctx.beginPath(); ctx.arc(b.x, b.y, r * 1.7, 0, Math.PI * 2); ctx.fill();
+
+      // Gelatin body with top-left light.
+      blobPath(b, t);
+      const lx = b.x - 0.32 * r, ly = b.y - 0.34 * r;
+      const grad = ctx.createRadialGradient(lx, ly, r * 0.08, b.x, b.y, r * 1.08);
+      grad.addColorStop(0, rgba(mix(rgb, [255, 255, 255], 0.6), 0.96));
+      grad.addColorStop(0.5, rgba(rgb, 0.9));
+      grad.addColorStop(1, rgba(mix(rgb, [0, 0, 0], 0.4), 0.9));
+      ctx.fillStyle = grad; ctx.fill();
+
+      // Rim light.
+      ctx.lineWidth = 1.5; ctx.strokeStyle = rgba(mix(rgb, [255, 255, 255], 0.35), 0.35); ctx.stroke();
+
+      // Specular highlight (fixed top-left).
+      ctx.save();
+      ctx.translate(b.x - 0.34 * r, b.y - 0.38 * r);
+      ctx.scale(1, 0.7);
+      const hl = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 0.42);
+      hl.addColorStop(0, 'rgba(255,255,255,0.75)');
+      hl.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = hl;
+      ctx.beginPath(); ctx.arc(0, 0, r * 0.42, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+    }
+
+    function draw(t) {
+      ctx.clearRect(0, 0, W, H);
+
+      // NPCs first (prey + bombs), users on top.
+      for (const n of npcs) {
+        if (n.state === 'dead') continue;
+        if (n.state === 'bomb') {
+          const blast = BOMB_BLAST_R();
+          ctx.beginPath(); ctx.arc(n.x, n.y, blast, 0, Math.PI * 2);
+          ctx.strokeStyle = rgba([255, 60, 60], n.blinkOn ? 0.5 : 0.18);
+          ctx.lineWidth = 2; ctx.setLineDash([6, 8]); ctx.stroke(); ctx.setLineDash([]);
+        }
+        drawBlob(n, t);
+      }
+      for (const u of players.values()) {
+        if (u.exploded) continue;
+        if (u.paused) ctx.globalAlpha = 0.32;   // disconnected → waiting
+        drawBlob(u, t);
+        ctx.globalAlpha = 1;
+      }
+
+      // Name label under each user blob (+ 💤 while disconnected).
+      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+      for (const u of players.values()) {
+        if (u.exploded) continue;
+        const label = u.paused ? `💤 ${u.name}` : u.name;
+        const ly = u.y + u.r + 8;
+        ctx.globalAlpha = u.paused ? 0.55 : 1;
+        ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(14,17,22,0.85)';
+        ctx.strokeText(label, u.x, ly);
+        ctx.fillStyle = 'rgba(231,236,243,0.95)';
+        ctx.fillText(label, u.x, ly);
+        ctx.globalAlpha = 1;
+      }
+
+      // Confetti / explosion bits on top.
+      for (const q of particles) {
+        ctx.save();
+        ctx.globalAlpha = Math.max(0, Math.min(1, q.life / q.maxLife));
+        ctx.translate(q.x, q.y); ctx.rotate(q.rot);
+        ctx.fillStyle = q.color;
+        ctx.fillRect(-q.size / 2, -q.size / 2, q.size, q.size * 0.6);
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // ---- Game over / reset --------------------------------------------------
+    function endGame(color, name) {
+      gameOver = true;
+      stopMusic();
+      playSound(SND.win);
+      winSw.style.setProperty('--c', color);
+      document.getElementById('newGame').style.setProperty('--c', color);
+      winText.textContent = `${name || 'A player'} wins!`;
+      overlay.classList.add('show');
+    }
+    function resetGame() {
+      gameOver = false;
+      startMusic();
+      overlay.classList.remove('show');
+      touching.clear();
+      particles.length = 0;
+      for (const u of players.values()) {
+        u.scale = 1; updateR(u); u.exploded = false; u.speed = 0; u.tx = 0; u.ty = 0;
+        u.squash = 0; u.squashVel = 0;
+        const p = randomPos(u.r); u.x = p.x; u.y = p.y;
+        sendProgress(u);
+      }
+      initNpcs();
+      updateHud();
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'game-reset' }));
+    }
+    document.getElementById('newGame').addEventListener('click', resetGame);
+
+    // ---- WebSocket ----------------------------------------------------------
+    let ws;
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}`);
+      ws.addEventListener('open', () => { setStatus('Requesting room…'); ws.send(JSON.stringify({ type: 'create-room' })); });
+      ws.addEventListener('message', (ev) => {
+        let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+        switch (msg.type) {
+          case 'room-created':
+            codeEl.textContent = msg.code;
+            if (msg.qr) qrEl.src = msg.qr;
+            setStatus('Waiting for phone…');
+            break;
+          case 'controller-joined':
+            addPlayer(msg.id, msg.color, msg.name);
+            if (players.size === 1) startMusic();   // first player joined → start the music
+            break;
+          case 'controller-left': removePlayer(msg.id); break;
+          case 'controller-disconnected': {
+            const p = players.get(msg.id);
+            if (p) { p.paused = true; p.speed = 0; p.tx = 0; p.ty = 0; updateHud(); }
+            break;
+          }
+          case 'controller-rejoined': {
+            const p = players.get(msg.id);
+            if (p) { p.paused = false; sendProgress(p); updateHud(); }
+            break;
+          }
+          case 'tilt': {
+            const p = players.get(msg.id);
+            if (!p) break;
+            p.tx = Number(msg.tx) || 0;  // left/right tilt
+            p.ty = Number(msg.ty) || 0;  // forward/back tilt
+            break;
+          }
+          case 'player-color': {
+            const p = players.get(msg.id);
+            if (!p) break;
+            setColor(p, msg.color);
+            const dot = hudDots.get(msg.id), fill = hudFills.get(msg.id);
+            if (dot) dot.style.background = msg.color;
+            if (fill) fill.style.background = msg.color;
+            break;
+          }
+          case 'player-name': {
+            const p = players.get(msg.id);
+            if (p) p.name = msg.name;
+            break;
+          }
+          case 'play-again': resetGame(); break;
+        }
+      });
+      ws.addEventListener('close', () => {
+        setStatus('Server connection lost — retrying…', 'disconnected');
+        players.clear(); touching.clear(); rebuildHud();
+        setTimeout(connect, 1500);
+      });
+      ws.addEventListener('error', () => ws.close());
+    }
+
+    // ---- Boot ---------------------------------------------------------------
+    resize();
+    qrRect = card.getBoundingClientRect();
+    hudRect = hud.getBoundingClientRect();
+    initNpcs();
+    connect();
+    requestAnimationFrame(step);
+  </script>
+</body>
+</html>
