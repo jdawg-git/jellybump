@@ -579,7 +579,11 @@
         b.fx = {};
         b.launch = null;
         b.playedIcon = null;
-        b.bot = { wanderAngle: Math.random() * Math.PI * 2 };
+        b.bot = {
+          wanderAngle: Math.random() * Math.PI * 2,
+          target: null, targetUntil: 0, targetOffsetX: 0, targetOffsetY: 0,
+          bombAvoiding: null,
+        };
         players.set(b.id, b);
       }
       touching.clear();
@@ -766,30 +770,46 @@
 
     // Bots use the same tilt-shaped acceleration as phones, but choose a simple
     // target each frame: flee nearby bombs, otherwise chase the nearest NPC.
-    function updateBotSteering(u, dt) {
+    function updateBotSteering(u, now, dt) {
       if (!u.bot) return;
       u.bot.wanderAngle += (Math.random() - 0.5) * 1.8 * dt;
       let steerX = 0, steerY = 0;
-      const danger = BOMB_BLAST_R() * 3.2 + u.r;
+      const danger = BOMB_BLAST_R() * 1.5 + u.r;
+      let bombNearby = false;
       for (const n of npcs) {
         if (n.state !== 'bomb') continue;
         const dx = u.x - n.x, dy = u.y - n.y;
         const distance = Math.hypot(dx, dy) || 0.001;
         if (distance >= danger) continue;
+        bombNearby = true;
+        // Each bot has a chance to notice a nearby bomb. A bot that misses it
+        // keeps roaming toward its target and can be caught by the blast.
+        if (u.bot.bombAvoiding === null) u.bot.bombAvoiding = Math.random() < 0.58;
+        if (!u.bot.bombAvoiding) continue;
         const weight = (danger - distance) / danger;
-        steerX += (dx / distance) * weight * 2.5;
-        steerY += (dy / distance) * weight * 2.5;
+        steerX += (dx / distance) * weight * 1.35;
+        steerY += (dy / distance) * weight * 1.35;
       }
+      if (!bombNearby) u.bot.bombAvoiding = null;
 
       if (Math.hypot(steerX, steerY) < 0.1) {
-        let target = null, nearest = Infinity;
-        for (const n of npcs) {
-          if (n.state !== 'roam') continue;
-          const distance = Math.hypot(n.x - u.x, n.y - u.y);
-          if (distance < nearest) { nearest = distance; target = n; }
+        if (!u.bot.target || u.bot.target.state !== 'roam' || now >= u.bot.targetUntil) {
+          const candidates = [];
+          for (const n of npcs) {
+            if (n.state !== 'roam') continue;
+            candidates.push({ n, distance: Math.hypot(n.x - u.x, n.y - u.y) });
+          }
+          candidates.sort((a, b) => a.distance - b.distance);
+          const choice = candidates[Math.floor(Math.random() * Math.min(3, candidates.length))];
+          u.bot.target = choice ? choice.n : null;
+          u.bot.targetUntil = now + 650 + Math.random() * 900;
+          u.bot.targetOffsetX = (Math.random() - 0.5) * 70;
+          u.bot.targetOffsetY = (Math.random() - 0.5) * 70;
         }
-        if (target) {
-          const dx = target.x - u.x, dy = target.y - u.y;
+        const target = u.bot.target;
+        if (target && target.state === 'roam') {
+          const dx = target.x + u.bot.targetOffsetX - u.x;
+          const dy = target.y + u.bot.targetOffsetY - u.y;
           const distance = Math.hypot(dx, dy) || 0.001;
           steerX = dx / distance;
           steerY = dy / distance;
@@ -797,8 +817,8 @@
           steerX = Math.cos(u.bot.wanderAngle);
           steerY = Math.sin(u.bot.wanderAngle);
         }
-        steerX += Math.cos(u.bot.wanderAngle) * 0.18;
-        steerY += Math.sin(u.bot.wanderAngle) * 0.18;
+        steerX += Math.cos(u.bot.wanderAngle) * 0.42;
+        steerY += Math.sin(u.bot.wanderAngle) * 0.42;
       }
 
       const magnitude = Math.hypot(steerX, steerY) || 1;
@@ -1049,7 +1069,7 @@
             continue;
           }
 
-          if (u.isBot) updateBotSteering(u, dt);
+          if (u.isBot) updateBotSteering(u, now, dt);
           const speedMul = (u.fx.superSpeed > now) ? 2 : 1;
           let vx = Math.cos(u.heading) * u.speed;
           let vy = Math.sin(u.heading) * u.speed;
