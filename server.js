@@ -30,6 +30,113 @@ const PALETTE = [
 // ---------------------------------------------------------------------------
 const rooms = new Map();
 
+// Anonymous, in-memory product analytics. A visitor cookie is only used to
+// deduplicate daily QR visitors; it contains no identifying information.
+const stats = {
+  qrScans: 0,
+  uniqueVisitors: new Set(),
+  dailyVisitors: new Map(),
+  roomsCreated: 0,
+  playersJoined: 0,
+  rejoins: 0,
+  replays: 0,
+  roundsCompleted: 0,
+  totalRoundPlayers: 0,
+  totalRoundDurationMs: 0,
+  powerupAwards: new Map(),
+  powerupUses: new Map(),
+};
+
+function dayKey(date = new Date()) {
+  return date.toISOString().slice(0, 10);
+}
+
+function incrementMap(map, key) {
+  if (!key) return;
+  map.set(key, (map.get(key) || 0) + 1);
+}
+
+function cookieValue(req, name) {
+  const header = req.headers.cookie || '';
+  for (const part of header.split(';')) {
+    const [key, ...value] = part.trim().split('=');
+    if (key === name) return value.join('=');
+  }
+  return null;
+}
+
+function recordQrScan(req, res, roomCode) {
+  if (!roomCode || !rooms.has(roomCode)) return;
+  let visitorId = cookieValue(req, 'jellybump_visitor');
+  if (!visitorId || !/^[0-9a-f-]{36}$/.test(visitorId)) {
+    visitorId = randomUUID();
+    const isSecure = req.headers['x-forwarded-proto']?.split(',')[0].trim() === 'https';
+    res.setHeader('Set-Cookie',
+      `jellybump_visitor=${visitorId}; Max-Age=31536000; Path=/; SameSite=Lax${isSecure ? '; Secure' : ''}`);
+  }
+  const today = dayKey();
+  if (!stats.dailyVisitors.has(today)) stats.dailyVisitors.set(today, new Set());
+  stats.dailyVisitors.get(today).add(visitorId);
+  stats.uniqueVisitors.add(visitorId);
+  stats.qrScans += 1;
+}
+
+function mapCounts(map) {
+  return [...map.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([name, count]) => ({ name, count }));
+}
+
+function statsSnapshot() {
+  const today = new Date();
+  const dailyUsers = [];
+  for (let offset = 29; offset >= 0; offset -= 1) {
+    const date = new Date(today);
+    date.setUTCDate(date.getUTCDate() - offset);
+    const dateKey = dayKey(date);
+    dailyUsers.push({
+      date: dateKey,
+      users: stats.dailyVisitors.get(dateKey)?.size || 0,
+    });
+  }
+  const averageDailyUsers = dailyUsers.reduce((sum, item) => sum + item.users, 0) / dailyUsers.length;
+  const averagePlayersPerRound = stats.roundsCompleted
+    ? stats.totalRoundPlayers / stats.roundsCompleted
+    : 0;
+  const averageRoundDurationSeconds = stats.roundsCompleted
+    ? stats.totalRoundDurationMs / stats.roundsCompleted / 1000
+    : 0;
+  let activePlayers = 0;
+  for (const room of rooms.values()) {
+    for (const slot of room.slots.values()) if (slot.ws) activePlayers += 1;
+  }
+  return {
+    generatedAt: new Date().toISOString(),
+    windowDays: 30,
+    dailyUsers,
+    averageDailyUsers,
+    summary: {
+      qrScans: stats.qrScans,
+      uniqueVisitors: stats.uniqueVisitors.size,
+      roomsCreated: stats.roomsCreated,
+      playersJoined: stats.playersJoined,
+      rejoins: stats.rejoins,
+      replays: stats.replays,
+      roundsCompleted: stats.roundsCompleted,
+      activeRooms: rooms.size,
+      activePlayers,
+      averagePlayersPerRound,
+      averageRoundDurationSeconds,
+    },
+    powerups: {
+      awards: mapCounts(stats.powerupAwards),
+      uses: mapCounts(stats.powerupUses),
+      totalAwards: [...stats.powerupAwards.values()].reduce((sum, count) => sum + count, 0),
+      totalUses: [...stats.powerupUses.values()].reduce((sum, count) => sum + count, 0),
+    },
+  };
+}
+
 // 4-char codes, uppercase, ambiguous glyphs (O/0/I/1) removed for QR-less typing.
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function genCode() {
@@ -89,7 +196,16 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/' || url.pathname === '/index.html') {
     await serveFile(res, 'host.html');
   } else if (url.pathname === '/controller') {
+    recordQrScan(req, res, (url.searchParams.get('room') || '').toUpperCase());
     await serveFile(res, 'controller.html');
+  } else if (url.pathname === '/stats') {
+    await serveFile(res, 'stats.html');
+  } else if (url.pathname === '/api/stats') {
+    res.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify(statsSnapshot()));
   } else if (url.pathname.startsWith('/images/') || url.pathname.startsWith('/sound/')) {
     await serveFile(res, decodeURIComponent(url.pathname).replace(/^\/+/, ''));
   } else if (url.pathname === '/health') {
@@ -127,7 +243,12 @@ wss.on('connection', (ws, req) => {
     switch (msg.type) {
       case 'create-room': {
         const code = genCode();
-        rooms.set(code, { host: ws, slots: new Map(), nextId: 1, colorIndex: 0 });
+        const now = Date.now();
+        rooms.set(code, {
+          host: ws, slots: new Map(), nextId: 1, colorIndex: 0,
+          roundStartedAt: now, roundComplete: false,
+        });
+        stats.roomsCreated += 1;
         ws.role = 'host';
         ws.roomCode = code;
         const scheme = typeof ws.forwardedProto === 'string'
@@ -156,6 +277,7 @@ wss.on('connection', (ws, req) => {
         const name = `Player ${id}`;
         const token = randomUUID();
         room.slots.set(id, { id, token, name, color, ws, dcTimer: null });
+        stats.playersJoined += 1;
         ws.role = 'controller';
         ws.roomCode = code;
         ws.slotId = id;
@@ -174,6 +296,7 @@ wss.on('connection', (ws, req) => {
         if (!slot) { send(ws, { type: 'rejoin-failed' }); return; }
         if (slot.dcTimer) { clearTimeout(slot.dcTimer); slot.dcTimer = null; }
         slot.ws = ws;
+        stats.rejoins += 1;
         ws.role = 'controller';
         ws.roomCode = code;
         ws.slotId = slot.id;
@@ -236,6 +359,12 @@ wss.on('connection', (ws, req) => {
         const room = rooms.get(ws.roomCode);
         if (!room) return;
         const winner = room.slots.get(msg.winnerId);
+        if (!room.roundComplete) {
+          room.roundComplete = true;
+          stats.roundsCompleted += 1;
+          stats.totalRoundPlayers += room.slots.size;
+          if (room.roundStartedAt) stats.totalRoundDurationMs += Date.now() - room.roundStartedAt;
+        }
         broadcast(room, {
           type: 'game-over',
           winnerId: msg.winnerId,
@@ -249,6 +378,9 @@ wss.on('connection', (ws, req) => {
         if (ws.role !== 'host' || !ws.roomCode) return;
         const room = rooms.get(ws.roomCode);
         if (!room) return;
+        stats.replays += 1;
+        room.roundStartedAt = Date.now();
+        room.roundComplete = false;
         broadcast(room, { type: 'game-reset' });
         break;
       }
@@ -271,13 +403,27 @@ wss.on('connection', (ws, req) => {
       case 'spin': {        // host → winner's phone: run the slot machine
         if (ws.role !== 'host' || !ws.roomCode) return;
         const room = rooms.get(ws.roomCode);
-        if (room) send(room.slots.get(msg.id)?.ws, { type: 'spin', award: msg.award, reel: msg.reel });
+        if (room) {
+          send(room.slots.get(msg.id)?.ws, { type: 'spin', award: msg.award, reel: msg.reel });
+        }
+        break;
+      }
+      case 'powerup-awarded': {
+        if (ws.role !== 'host' || !ws.roomCode || !rooms.has(ws.roomCode)) return;
+        incrementMap(stats.powerupAwards, String(msg.powerup || ''));
+        break;
+      }
+      case 'powerup-used': {
+        if (ws.role !== 'host' || !ws.roomCode || !rooms.has(ws.roomCode)) return;
+        incrementMap(stats.powerupUses, String(msg.powerup || ''));
         break;
       }
       case 'use-powerup': { // phone → host: activate a stored power-up
         if (ws.role !== 'controller' || !ws.roomCode) return;
         const room = rooms.get(ws.roomCode);
-        if (room) send(room.host, { type: 'use-powerup', id: ws.slotId, powerup: msg.powerup });
+        if (room) {
+          send(room.host, { type: 'use-powerup', id: ws.slotId, powerup: msg.powerup });
+        }
         break;
       }
     }

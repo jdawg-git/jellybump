@@ -723,6 +723,9 @@
       const id = PU_IDS[Math.floor(Math.random() * PU_IDS.length)];
       u.inv.push(id);
       sendInventory(u);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'powerup-awarded', id: u.id, powerup: id }));
+      }
       return id;
     }
     function usePowerup(u, id) {
@@ -730,6 +733,9 @@
       if (i < 0) return;                 // doesn't own it
       u.inv.splice(i, 1);
       activateEffect(u, id);
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'powerup-used', id: u.id, powerup: id }));
+      }
       const t = performance.now();
       // Badge: icon shows for the effect's full duration; name only for the first 2s.
       u.playedIcon = { id, icon: PU_ICON[id], name: PU_NAME[id], until: t + (PU_DUR[id] || 2000), nameUntil: t + 2000 };
