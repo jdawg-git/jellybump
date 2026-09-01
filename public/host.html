@@ -483,6 +483,9 @@
     const players = new Map();  // id -> user blob
     const npcs = [];            // fixed array of NPC blobs
     const BOT_COLORS = ['#ff8fab', '#c77dff', '#ffb347', '#2ec4b6', '#f79d65', '#ffd166', '#8bd3ff', '#e56bff'];
+    const BOT_MAX_SPEED = 315;
+    const BOT_TILT_REF = 14;
+    const BOT_ACCEL_FACTOR = 0.68;
 
     function updateR(b) { b.r = b.baseR * Math.sqrt(b.scale); }
 
@@ -569,7 +572,7 @@
         b.name = `Demo Bot ${i}`;
         b.order = 1000 + i;
         b.isBot = true;
-        b.speed = 80;
+        b.speed = 55;
         b.tx = 0; b.ty = 0;
         b.wins = 0;
         b.inv = [];
@@ -799,10 +802,13 @@
       }
 
       const magnitude = Math.hypot(steerX, steerY) || 1;
-      const directionX = steerX / magnitude, directionY = steerY / magnitude;
+      // Keep the chase imperfect so a human can outmaneuver a bot.
+      const wobble = Math.sin(performance.now() * 0.0015 + u.order * 2.7) * 0.22;
+      const directionX = steerX / magnitude + Math.cos(u.bot.wanderAngle) * wobble;
+      const directionY = steerY / magnitude + Math.sin(u.bot.wanderAngle) * wobble;
       const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
-      u.tx = clamp(directionX * TILT_REF, -TILT_REF, TILT_REF);
-      u.ty = clamp(-directionY * TILT_REF, -TILT_REF, TILT_REF);
+      u.tx = clamp(directionX * BOT_TILT_REF, -TILT_REF, TILT_REF);
+      u.ty = clamp(-directionY * BOT_TILT_REF, -TILT_REF, TILT_REF);
     }
 
     // ---- Growth / explosions ------------------------------------------------
@@ -1049,14 +1055,15 @@
           let vy = Math.sin(u.heading) * u.speed;
           const tmag = Math.hypot(u.tx || 0, u.ty || 0);
           if (tmag > TILT_DEADZONE) {
-            const k = (Math.min(1, tmag / TILT_REF) / tmag) * ACCEL * speedMul * dt;
+            const botFactor = u.isBot ? BOT_ACCEL_FACTOR : 1;
+            const k = (Math.min(1, tmag / TILT_REF) / tmag) * ACCEL * botFactor * speedMul * dt;
             vx += (u.tx) * k;        // left/right
             vy += (-u.ty) * k;       // tip forward (ty>0) → up (screen −y)
           }
           const fr = Math.max(0, 1 - FRICTION * dt);
           vx *= fr; vy *= fr;
           let sp = Math.hypot(vx, vy);
-          const cap = MAX_SPEED * speedMul;
+          const cap = (u.isBot ? BOT_MAX_SPEED : MAX_SPEED) * speedMul;
           if (sp > cap) { const c = cap / sp; vx *= c; vy *= c; sp = cap; }
           if (sp > 0.001) u.heading = Math.atan2(vy, vx);
           u.speed = sp;
