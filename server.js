@@ -193,7 +193,7 @@ wss.on('connection', (ws, req) => {
         const room = rooms.get(ws.roomCode);
         if (!room) return;
         for (const id of Array.isArray(msg.ids) ? msg.ids : []) {
-          send(room.slots.get(id)?.ws, { type: 'buzz' });
+          send(room.slots.get(id)?.ws, { type: 'buzz', confetti: msg.confetti, rainbow: msg.rainbow });
         }
         break;
       }
@@ -256,6 +256,26 @@ wss.on('connection', (ws, req) => {
         const room = rooms.get(ws.roomCode);
         if (!room) return;
         send(room.slots.get(msg.id)?.ws, { type: 'progress', value: msg.value });
+        break;
+      }
+
+      // ---- Power-ups ------------------------------------------------------
+      case 'inventory': {   // host → one phone: that player's stored power-ups
+        if (ws.role !== 'host' || !ws.roomCode) return;
+        const room = rooms.get(ws.roomCode);
+        if (room) send(room.slots.get(msg.id)?.ws, { type: 'inventory', items: msg.items });
+        break;
+      }
+      case 'spin': {        // host → winner's phone: run the slot machine
+        if (ws.role !== 'host' || !ws.roomCode) return;
+        const room = rooms.get(ws.roomCode);
+        if (room) send(room.slots.get(msg.id)?.ws, { type: 'spin', award: msg.award, reel: msg.reel });
+        break;
+      }
+      case 'use-powerup': { // phone → host: activate a stored power-up
+        if (ws.role !== 'controller' || !ws.roomCode) return;
+        const room = rooms.get(ws.roomCode);
+        if (room) send(room.host, { type: 'use-powerup', id: ws.slotId, powerup: msg.powerup });
         break;
       }
     }

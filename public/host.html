@@ -264,6 +264,7 @@
       npcBump: new Audio('/sound/npc-bump.mp3'),
       bomb: new Audio('/sound/bomb.mp3'),
       win: new Audio('/sound/win.mp3'),
+      powerup: new Audio('/sound/powerup.mp3'),  // file added later; playSound is guarded
     };
     for (const a of Object.values(SND)) a.preload = 'auto';
     function playSound(a) {
@@ -345,6 +346,45 @@
     const BOMB_DARK = '#5a0d0d', BOMB_BRIGHT = '#ff2a2a';
     const BOMB_BLAST_R = () => NPC_R * 4; // blast radius (2× the NPC radius)
 
+    // ---- Power-ups ----------------------------------------------------------
+    // Shared id list (keep in sync with controller.html). Emoji placeholders now;
+    // later drop /images/powerups/<id>.png and swap the render.
+    const POWERUPS = [
+      { id: 'super-bounce',  name: 'Super Bounce',   icon: '🌀', img: '/images/superbounce.png' },
+      { id: 'invincible-5',  name: '5s Invincible',  icon: '🛡️', img: '/images/5sinvincible.png' },
+      { id: 'invincible-10', name: '10s Invincible', icon: '🛡️', img: '/images/10sinvincible.png' },
+      { id: 'super-speed',   name: 'Super Speed',    icon: '⚡', img: '/images/speed.png' },
+      { id: 'magnet',        name: 'Blob Magnet',    icon: '🧲', img: '/images/blobmagnet.png' },
+      { id: 'growth',        name: 'Growth Boost',   icon: '🌱', img: '/images/growthboost.png' },
+      { id: 'bomb-blast',    name: 'Bomb Blast',     icon: '💥', img: '/images/bombblast.png' },
+      { id: 'grab-radius',   name: 'Grab Radius',    icon: '🎯', img: '/images/grabradius.png' },
+    ];
+    const PU_ICON = Object.fromEntries(POWERUPS.map(p => [p.id, p.icon]));
+    const PU_NAME = Object.fromEntries(POWERUPS.map(p => [p.id, p.name]));
+    const PU_IDS = POWERUPS.map(p => p.id);
+    // Preload the power-up art for the above-blob badge.
+    const PU_IMAGE = {};
+    for (const p of POWERUPS) { const im = new Image(); im.src = p.img; PU_IMAGE[p.id] = im; }
+    const MAX_INV = 6;
+    const SUPER_BOUNCE_MS = 15000, INVINCIBLE5_MS = 5000, INVINCIBLE10_MS = 10000;
+    const SUPER_SPEED_MS = 10000, MAGNET_MS = 5000, GROWTH_MS = 10000, GRAB_MS = 10000;
+    // Effect duration per power-up (drives the above-blob badge; instant = 2s).
+    const PU_DUR = {
+      'super-bounce': SUPER_BOUNCE_MS, 'invincible-5': INVINCIBLE5_MS, 'invincible-10': INVINCIBLE10_MS,
+      'super-speed': SUPER_SPEED_MS, 'magnet': MAGNET_MS, 'growth': GROWTH_MS, 'grab-radius': GRAB_MS,
+      'bomb-blast': 2000,
+    };
+    const LAUNCH_SPEED = 1400;              // super-bounce fling speed
+    const GRAB_R = () => BOMB_BLAST_R() * 2; // grab-radius ring size
+
+    // ---- Mystery blob (rare "?" that grants a random power-up) ---------------
+    const MYSTERY_R = NPC_R * 2;
+    const MYSTERY_GAP_MIN = 12000, MYSTERY_GAP_MAX = 30000;  // spaced-out appearances
+    const MYSTERY_COLORS = ['#ff5566', '#ff9f43', '#ffd93d', '#4ec16b', '#4f9dff', '#9b6bff'];
+    let mystery = null;
+    let mysteryNextAt = MYSTERY_GAP_MIN + Math.random() * (MYSTERY_GAP_MAX - MYSTERY_GAP_MIN);
+    function scheduleMystery(now) { mystery = null; mysteryNextAt = now + MYSTERY_GAP_MIN + Math.random() * (MYSTERY_GAP_MAX - MYSTERY_GAP_MIN); }
+
     // ---- Color helpers ------------------------------------------------------
     function hexToRgb(hex) {
       hex = hex.replace('#', '');
@@ -424,7 +464,12 @@
       b.id = id; b.name = name || `Player ${id}`;
       b.speed = 0; b.tx = 0; b.ty = 0;
       b.wins = 0;
+      b.inv = [];              // stored power-up ids (≤ MAX_INV)
+      b.fx = {};               // active timed effects: name → expiry ms
+      b.launch = null;         // {vx, vy} while flung by a super-bounce
+      b.playedIcon = null;     // {icon, name, until, nameUntil} — above-blob badge
       players.set(id, b);
+      awardPowerup(b);         // every player starts with one random power-up
       rebuildHud();
     }
     function removePlayer(id) { players.delete(id); touching.clear(); rebuildHud(); }
@@ -635,6 +680,11 @@
       rebuildHud(); updateHud();   // re-rank the leaderboard by the new win totals
       sendProgress(u);
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'game-over', winnerId: u.id }));
+      // Award a random power-up (unless full) and spin the winner's slot machine.
+      const award = awardPowerup(u);
+      if (award && ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'spin', id: u.id, award, reel: PU_IDS }));
+      }
       endGame(u.color, u.name);
     }
     function popNpc(n, user) {
@@ -647,13 +697,57 @@
     function explodeBomb(n) {
       burst(n.x, n.y, [BOMB_BRIGHT, BOMB_DARK], 60, 460);
       const blast = BOMB_BLAST_R();
+      const t = performance.now();
       let hitUser = false;
       for (const u of players.values()) {
         if (u.exploded) continue;
-        if (Math.hypot(u.x - n.x, u.y - n.y) <= blast + u.r) { shrinkUser(u); hitUser = true; }
+        if (Math.hypot(u.x - n.x, u.y - n.y) <= blast + u.r) {
+          if (!(u.fx.invincible > t)) shrinkUser(u);   // invincible players take no damage
+          hitUser = true;
+        }
       }
       playSound(hitUser ? SND.bomb : SND.npcBump);
       respawnNpc(n, false); // returns as a fresh normal NPC
+    }
+
+    // ---- Power-ups ----------------------------------------------------------
+    function sendInventory(u) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'inventory', id: u.id, items: u.inv }));
+    }
+    // Buzz one phone. opts.confetti = a color (player bumps), opts.rainbow = true (mystery).
+    function sendBuzz(id, opts) {
+      if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'buzz', ids: [id], ...(opts || {}) }));
+    }
+    function awardPowerup(u) {           // called on win; null if inventory full
+      if (u.inv.length >= MAX_INV) return null;
+      const id = PU_IDS[Math.floor(Math.random() * PU_IDS.length)];
+      u.inv.push(id);
+      sendInventory(u);
+      return id;
+    }
+    function usePowerup(u, id) {
+      const i = u.inv.indexOf(id);
+      if (i < 0) return;                 // doesn't own it
+      u.inv.splice(i, 1);
+      activateEffect(u, id);
+      const t = performance.now();
+      // Badge: icon shows for the effect's full duration; name only for the first 2s.
+      u.playedIcon = { id, icon: PU_ICON[id], name: PU_NAME[id], until: t + (PU_DUR[id] || 2000), nameUntil: t + 2000 };
+      playSound(SND.powerup);
+      sendInventory(u);
+    }
+    function activateEffect(u, id) {
+      const t = performance.now();
+      switch (id) {
+        case 'super-bounce':  u.fx.superBounce = t + SUPER_BOUNCE_MS; break;
+        case 'invincible-5':  u.fx.invincible = Math.max(u.fx.invincible || 0, t + INVINCIBLE5_MS); break;
+        case 'invincible-10': u.fx.invincible = Math.max(u.fx.invincible || 0, t + INVINCIBLE10_MS); break;
+        case 'super-speed':   u.fx.superSpeed = t + SUPER_SPEED_MS; break;
+        case 'magnet':        u.fx.magnet = t + MAGNET_MS; break;
+        case 'growth':        u.fx.growth = t + GROWTH_MS; break;
+        case 'grab-radius':   u.fx.grabRadius = t + GRAB_MS; break;
+        case 'bomb-blast':    for (const n of npcs) if (n.state === 'bomb') explodeBomb(n); break;
+      }
     }
 
     // ---- Collisions ---------------------------------------------------------
@@ -688,14 +782,25 @@
             if (!touching.has(key)) {
               touching.add(key);
               playSound(SND.userBump);
-              // Both blobs grow (each only if it was actually moving — an idle
-              // blob doesn't grow). Confetti mixes both blobs' colors.
-              let grew = false;
-              if (aSpeed0 >= MOVING_MIN) { growUser(a, GROW_COLLISION); grew = true; }
-              if (bSpeed0 >= MOVING_MIN) { growUser(b, GROW_COLLISION); grew = true; }
-              if (grew) {
-                burst((a.x + b.x) / 2, (a.y + b.y) / 2, [a.color, b.color], 30, 300);
-                if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'buzz', ids: [idA, idB] }));
+              const t = performance.now();
+              const aSuper = a.fx.superBounce > t, bSuper = b.fx.superBounce > t;
+              if (aSuper !== bSuper) {
+                // One player has Super Bounce → fling the OTHER across the arena.
+                const victim = aSuper ? b : a;
+                const dirx = aSuper ? nx : -nx, diry = aSuper ? ny : -ny; // away from the super player
+                victim.launch = { vx: dirx * LAUNCH_SPEED, vy: diry * LAUNCH_SPEED };
+                applySquash(victim, Math.atan2(diry, dirx), 0.5);
+                sendBuzz(idA, { confetti: b.color }); sendBuzz(idB, { confetti: a.color });
+              } else {
+                // Both blobs grow (each only if it was actually moving — an idle
+                // blob doesn't grow). Confetti mixes both blobs' colors.
+                let grew = false;
+                if (aSpeed0 >= MOVING_MIN) { growUser(a, GROW_COLLISION); grew = true; }
+                if (bSpeed0 >= MOVING_MIN) { growUser(b, GROW_COLLISION); grew = true; }
+                if (grew) {
+                  burst((a.x + b.x) / 2, (a.y + b.y) / 2, [a.color, b.color], 30, 300);
+                  sendBuzz(idA, { confetti: b.color }); sendBuzz(idB, { confetti: a.color });
+                }
               }
             }
           } else if (aUser !== bUser) {
@@ -703,11 +808,11 @@
             const user = aUser ? a : b, npc = aUser ? b : a;
             const uid = aUser ? idA : idB;
             if (user.speed >= MOVING_MIN) {
-              // moving user → pop the NPC and grow
+              // moving user → pop the NPC and grow (Growth power-up → player-bump rate)
               popNpc(npc, user);
-              growUser(user, GROW_NPC);
+              growUser(user, (user.fx.growth > performance.now()) ? GROW_COLLISION : GROW_NPC);
               applySquash(user, Math.atan2(ny, nx), 0.3);
-              if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'buzz', ids: [uid] }));
+              sendBuzz(uid);   // vibrate only — no phone confetti for NPC pops
             } else {
               // idle user → just bounce off; the NPC survives
               const overlap = minDist - dist;
@@ -741,22 +846,40 @@
       hudRect = hud.getBoundingClientRect();
 
       if (!gameOver) {
-        // Users: marble control. Tilt accelerates the blob in a direction;
-        // going straight builds speed, turning bleeds it off (via friction).
+        // Players with Magnet active (NPCs will steer toward the nearest of them).
+        const magnets = [...players.values()].filter(u => !u.exploded && !u.paused && u.fx.magnet > now);
+
+        // Users: marble control — or a launched flight from someone's Super Bounce.
         for (const u of players.values()) {
           if (u.exploded || u.paused) continue;
+
+          if (u.launch) {
+            // Flung across the arena; no control until it hits a wall.
+            const spd = Math.hypot(u.launch.vx, u.launch.vy);
+            u.heading = Math.atan2(u.launch.vy, u.launch.vx); u.speed = spd;
+            u.x += u.launch.vx * dt; u.y += u.launch.vy * dt;
+            const atWall = (u.x <= u.r) || (u.x >= W - u.r) || (u.y <= u.r) || (u.y >= H - u.r);
+            const h0 = u.heading;
+            wallBounce(u); obstacleBounce(u);
+            if (atWall) u.launch = null;                       // one far-wall bounce ends it
+            else if (u.heading !== h0) u.launch = { vx: Math.cos(u.heading) * spd, vy: Math.sin(u.heading) * spd };
+            continue;
+          }
+
+          const speedMul = (u.fx.superSpeed > now) ? 2 : 1;
           let vx = Math.cos(u.heading) * u.speed;
           let vy = Math.sin(u.heading) * u.speed;
           const tmag = Math.hypot(u.tx || 0, u.ty || 0);
           if (tmag > TILT_DEADZONE) {
-            const k = (Math.min(1, tmag / TILT_REF) / tmag) * ACCEL * dt;
+            const k = (Math.min(1, tmag / TILT_REF) / tmag) * ACCEL * speedMul * dt;
             vx += (u.tx) * k;        // left/right
             vy += (-u.ty) * k;       // tip forward (ty>0) → up (screen −y)
           }
           const fr = Math.max(0, 1 - FRICTION * dt);
           vx *= fr; vy *= fr;
           let sp = Math.hypot(vx, vy);
-          if (sp > MAX_SPEED) { const c = MAX_SPEED / sp; vx *= c; vy *= c; sp = MAX_SPEED; }
+          const cap = MAX_SPEED * speedMul;
+          if (sp > cap) { const c = cap / sp; vx *= c; vy *= c; sp = cap; }
           if (sp > 0.001) u.heading = Math.atan2(vy, vx);
           u.speed = sp;
           u.x += vx * dt; u.y += vy * dt;
@@ -772,7 +895,14 @@
             continue;
           }
           if (n.state === 'roam') {
-            n.heading += (Math.random() - 0.5) * 2.0 * dt; // gentle wander
+            if (magnets.length) {
+              // Magnet power-up: steer toward the nearest magnet player.
+              let mt = null, mb = Infinity;
+              for (const u of magnets) { const d = Math.hypot(u.x - n.x, u.y - n.y); if (d < mb) { mb = d; mt = u; } }
+              n.heading = Math.atan2(mt.y - n.y, mt.x - n.x);
+            } else {
+              n.heading += (Math.random() - 0.5) * 2.0 * dt; // gentle wander
+            }
             n.x += Math.cos(n.heading) * n.speed * dt;
             n.y += Math.sin(n.heading) * n.speed * dt;
             wallBounce(n); obstacleBounce(n);
@@ -806,10 +936,68 @@
           }
         }
 
+        // Grab Radius power-up: pop roaming NPCs inside an active player's ring.
+        for (const u of players.values()) {
+          if (u.exploded || u.paused || !(u.fx.grabRadius > now)) continue;
+          const gr = GRAB_R();
+          for (const n of npcs) {
+            if (n.state !== 'roam') continue;
+            if (Math.hypot(n.x - u.x, n.y - u.y) <= gr + n.r) {
+              popNpc(n, u);
+              growUser(u, (u.fx.growth > now) ? GROW_COLLISION : GROW_NPC);
+            }
+          }
+        }
+
+        // Mystery blob — a rare rainbow "?" that grants a random power-up.
+        // Only exists while a game is actually being played (≥1 active player);
+        // it never despawns on its own — it stays until a moving player bumps it.
+        const anyActivePlayer = [...players.values()].some(u => !u.exploded && !u.paused);
+        if (mystery && !anyActivePlayer) scheduleMystery(now);        // clear on the attract screen
+        else if (!mystery && anyActivePlayer && now >= mysteryNextAt) {
+          const p = randomPos(MYSTERY_R);
+          mystery = { x: p.x, y: p.y, r: MYSTERY_R, kind: 'mystery',
+            heading: Math.random() * Math.PI * 2,
+            speed: NPC_SPEED_MIN + Math.random() * (NPC_SPEED_MAX - NPC_SPEED_MIN),
+            wobble: Math.random() * Math.PI * 2, squash: 0, squashVel: 0, squashAngle: 0 };
+        }
+        if (mystery) {
+          mystery.heading += (Math.random() - 0.5) * 1.5 * dt;   // gentle wander
+          mystery.x += Math.cos(mystery.heading) * mystery.speed * dt;
+          mystery.y += Math.sin(mystery.heading) * mystery.speed * dt;
+          wallBounce(mystery); obstacleBounce(mystery);
+          // Bounce off roaming NPCs like any other NPC (don't fly over them).
+          for (const n of npcs) {
+            if (n.state !== 'roam') continue;
+            const dx = n.x - mystery.x, dy = n.y - mystery.y;
+            const d = Math.hypot(dx, dy) || 0.0001, minD = mystery.r + n.r;
+            if (d < minD) {
+              const nx = dx / d, ny = dy / d, overlap = minD - d;
+              mystery.x -= nx * overlap / 2; mystery.y -= ny * overlap / 2;
+              n.x += nx * overlap / 2; n.y += ny * overlap / 2;
+              bounceAway(mystery, -nx, -ny); bounceAway(n, nx, ny);
+              mystery.speed *= RESTITUTION; n.speed *= RESTITUTION;
+            }
+          }
+          // A moving player bumping it → random power-up (no growth), then the next
+          // one is scheduled after a spaced gap.
+          for (const u of players.values()) {
+            if (u.exploded || u.paused || u.speed < MOVING_MIN) continue;
+            if (Math.hypot(u.x - mystery.x, u.y - mystery.y) <= mystery.r + u.r) {
+              burst(mystery.x, mystery.y, MYSTERY_COLORS, 40, 340);
+              awardPowerup(u);
+              sendBuzz(u.id, { rainbow: true });
+              scheduleMystery(now);
+              break;
+            }
+          }
+        }
+
         handleCollisions();
       }
 
       for (const b of allBlobs()) updateDeform(b, dt);
+      if (mystery) updateDeform(mystery, dt);   // relax its impact-squash (keeps it round)
       updateParticles(dt);
 
       hudAccum += dt;
@@ -887,6 +1075,38 @@
       ctx.restore();
     }
 
+    function drawMystery(m, t) {
+      const r = m.r;
+      // Soft glow (same halo idea as drawBlob).
+      const halo = ctx.createRadialGradient(m.x, m.y, r * 0.4, m.x, m.y, r * 1.7);
+      halo.addColorStop(0, 'rgba(255,255,255,0.22)'); halo.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = halo; ctx.beginPath(); ctx.arc(m.x, m.y, r * 1.7, 0, Math.PI * 2); ctx.fill();
+
+      // Gelatin body — same wobbly outline as the NPC blobs, filled with a
+      // rotating rainbow (conic gradient; falls back to a solid color if unsupported).
+      let fill;
+      try {
+        fill = ctx.createConicGradient(t, m.x, m.y);
+        for (let i = 0; i <= MYSTERY_COLORS.length; i++) fill.addColorStop(i / MYSTERY_COLORS.length, MYSTERY_COLORS[i % MYSTERY_COLORS.length]);
+      } catch { fill = MYSTERY_COLORS[0]; }
+      blobPath(m, t);
+      ctx.fillStyle = fill; ctx.fill();
+      ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(0,0,0,0.30)'; ctx.stroke();
+
+      // Top-left highlight, clipped to the blob shape.
+      ctx.save();
+      blobPath(m, t); ctx.clip();
+      const hl = ctx.createRadialGradient(m.x - r * 0.35, m.y - r * 0.35, 0, m.x, m.y, r);
+      hl.addColorStop(0, 'rgba(255,255,255,0.6)'); hl.addColorStop(0.55, 'rgba(255,255,255,0)');
+      ctx.fillStyle = hl; ctx.fillRect(m.x - r * 1.3, m.y - r * 1.3, r * 2.6, r * 2.6);
+      ctx.restore();
+
+      // Bold black "?".
+      ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.font = `900 ${Math.round(r * 1.2)}px -apple-system, Arial, sans-serif`;
+      ctx.fillText('?', m.x, m.y + r * 0.06);
+    }
+
     function draw(t) {
       ctx.clearRect(0, 0, W, H);
 
@@ -901,9 +1121,20 @@
         }
         drawBlob(n, t);
       }
+      if (mystery) drawMystery(mystery, t);
+      const nowT = performance.now();
       for (const u of players.values()) {
         if (u.exploded) continue;
+        if (u.fx.grabRadius > nowT) {           // Grab Radius ring
+          const gr = GRAB_R();
+          ctx.beginPath(); ctx.arc(u.x, u.y, gr, 0, Math.PI * 2);
+          ctx.strokeStyle = rgba(u._rgb, 0.55); ctx.lineWidth = 2;
+          ctx.setLineDash([6, 8]); ctx.stroke(); ctx.setLineDash([]);
+        }
         if (u.paused) ctx.globalAlpha = 0.32;   // disconnected → waiting
+        else if (Object.values(u.fx).some(v => v > nowT)) {
+          ctx.globalAlpha = 0.6 + 0.4 * (0.5 + 0.5 * Math.sin(nowT / 90));  // blink while a power-up is active
+        }
         drawBlob(u, t);
         ctx.globalAlpha = 1;
       }
@@ -921,6 +1152,27 @@
         ctx.fillStyle = 'rgba(231,236,243,0.95)';
         ctx.fillText(label, u.x, ly);
         ctx.globalAlpha = 1;
+      }
+
+      // Power-up badge above the blob: icon lasts the whole effect; name for 2s.
+      ctx.textBaseline = 'bottom';
+      for (const u of players.values()) {
+        if (u.exploded || !u.playedIcon) continue;
+        if (u.playedIcon.until < nowT) { u.playedIcon = null; continue; }
+        const iy = u.y - u.r - 14;
+        const img = PU_IMAGE[u.playedIcon.id];
+        if (img && img.complete && img.naturalWidth) {
+          const s = 42; ctx.drawImage(img, u.x - s / 2, iy - s, s, s);
+        } else {
+          ctx.font = '26px -apple-system, sans-serif'; ctx.fillText(u.playedIcon.icon, u.x, iy);  // fallback
+        }
+        if (u.playedIcon.nameUntil > nowT) {
+          ctx.font = '700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+          ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(14,17,22,0.85)';
+          ctx.strokeText(u.playedIcon.name, u.x, iy - 48);
+          ctx.fillStyle = 'rgba(231,236,243,0.98)';
+          ctx.fillText(u.playedIcon.name, u.x, iy - 48);
+        }
       }
 
       // Confetti / explosion bits on top.
@@ -954,10 +1206,13 @@
       for (const u of players.values()) {
         u.scale = 1; updateR(u); u.exploded = false; u.speed = 0; u.tx = 0; u.ty = 0;
         u.squash = 0; u.squashVel = 0;
+        u.fx = {}; u.launch = null; u.playedIcon = null;   // clear effects, keep inventory
         const p = randomPos(u.r); u.x = p.x; u.y = p.y;
         sendProgress(u);
+        sendInventory(u);   // refresh the phone's power-up grid for the new round
       }
       initNpcs();
+      scheduleMystery(performance.now());   // clear any mystery blob; schedule the next
       updateHud();
       if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'game-reset' }));
     }
@@ -989,7 +1244,12 @@
           }
           case 'controller-rejoined': {
             const p = players.get(msg.id);
-            if (p) { p.paused = false; sendProgress(p); updateHud(); }
+            if (p) { p.paused = false; sendProgress(p); sendInventory(p); updateHud(); }
+            break;
+          }
+          case 'use-powerup': {
+            const p = players.get(msg.id);
+            if (p && !p.exploded) usePowerup(p, msg.powerup);
             break;
           }
           case 'tilt': {

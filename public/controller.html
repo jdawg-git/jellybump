@@ -53,7 +53,8 @@
     }
 
     /* --- Start screen --- */
-    #startScreen { justify-content: center; gap: 14px; }
+    #startScreen { justify-content: center; gap: 12px; }
+    .startRow { display: flex; align-items: center; justify-content: center; gap: 40px; }
     .hold { color: var(--muted); font-size: 13px; }
     .room { display: none; }   /* room code hidden — join is via QR/link only */
     .room b { color: var(--fg); letter-spacing: 3px; }
@@ -72,8 +73,8 @@
     #startStatus.error { color: var(--bad); }
 
     /* --- Play screen --- */
-    #playScreen { justify-content: flex-start; }
-    .playRow { flex: 1; width: 100%; display: flex; align-items: center; justify-content: space-around; padding: 0 6%; }
+    #playScreen { justify-content: center; gap: 6px; }
+    .playRow { width: 100%; display: flex; align-items: center; justify-content: space-around; padding: 0 5%; }
 
     /* Tilt guide (illustrative, non-interactive) */
     .guide { display: flex; flex-direction: column; align-items: center; gap: 4px; }
@@ -84,9 +85,9 @@
     .guide .side { display: flex; align-items: center; gap: 6px; }
 
     /* Player controls */
-    .control { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .control { display: flex; flex-direction: column; align-items: center; gap: 10px; }
     .colorCircle {
-      width: 150px; height: 150px; border-radius: 50%; border: none; cursor: pointer;
+      width: 112px; height: 112px; border-radius: 50%; border: none; cursor: pointer;
       animation: blobIdle 3.4s ease-in-out infinite;
     }
     .colorCircle:active { animation: none; transform: scale(1.05, 0.9); }
@@ -97,8 +98,29 @@
       font: 800 22px -apple-system, sans-serif; background: #1b2028; color: var(--fg);
       border: 1px solid #333b48; border-radius: 8px; padding: 4px 10px; width: 180px; text-align: center;
     }
-    .track { width: 300px; max-width: 60vw; height: 18px; border-radius: 12px; background: var(--track); overflow: hidden; }
+    .track { width: 240px; max-width: 52vw; height: 14px; border-radius: 10px; background: var(--track); overflow: hidden; }
     .fill { height: 100%; width: 0%; background: var(--accent); border-radius: 12px; transition: width .18s linear; }
+
+    /* Power-up grid (replaces the tilt guide from round 2 on) */
+    .powerups { display: flex; flex-direction: column; align-items: center; gap: 9px; }
+    .pu-title { font-size: 14px; font-weight: 800; letter-spacing: .06em; }
+    .pu-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px 12px; }
+    .pu-slot {
+      width: 50px; height: 50px; border-radius: 50%; overflow: hidden;
+      border: 2px dashed #565c68; background: #2b3039;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .pu-slot.filled { border-style: solid; border-color: #ffffff40; background: #333a45; cursor: pointer; }
+    .pu-slot.filled:active { transform: scale(.9); }
+    .pu-slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    /* Slot machine (winner's win screen) */
+    .slot-reel { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+    .reel-window { width: 116px; height: 116px; overflow: hidden; border-radius: 20px; border: 2px solid #333b48; background: #171b22; }
+    .reel-strip { display: flex; height: 100%; align-items: center; will-change: transform; }
+    .reel-item { flex: 0 0 116px; height: 116px; display: flex; align-items: center; justify-content: center; }
+    .reel-item img { width: 96px; height: 96px; object-fit: contain; }
+    .reel-award { font-size: 18px; font-weight: 800; min-height: 22px; }
 
     /* --- End screen --- */
     #endScreen { justify-content: center; gap: 14px; }
@@ -149,15 +171,8 @@
       <img class="brand" src="/images/JellyBump.png" alt="JellyBump" />
       <div class="hold">Hold the phone sideways — right edge up</div>
       <div class="room" id="room"></div>
-      <button id="startBtn" class="big blobby">Tap to Join</button>
-      <button id="howBtn" class="how-link">How to Play</button>
-      <div id="startStatus"></div>
-    </section>
-
-    <!-- PLAY -->
-    <section class="screen" id="playScreen">
-      <img class="brand small" src="/images/JellyBump.png" alt="JellyBump" />
-      <div class="playRow">
+      <div class="startRow">
+        <button id="startBtn" class="big blobby">Tap to Join</button>
         <div class="guide">
           <div class="lbl">Up</div>
           <div class="tri">&#9650;</div>
@@ -168,6 +183,19 @@
           </div>
           <div class="tri">&#9660;</div>
           <div class="lbl">Down</div>
+        </div>
+      </div>
+      <button id="howBtn" class="how-link">How to Play</button>
+      <div id="startStatus"></div>
+    </section>
+
+    <!-- PLAY -->
+    <section class="screen" id="playScreen">
+      <img class="brand small" src="/images/JellyBump.png" alt="JellyBump" />
+      <div class="playRow">
+        <div class="powerups" id="powerups">
+          <div class="pu-title">POWER UPS</div>
+          <div class="pu-grid" id="puGrid"></div>
         </div>
         <div class="control">
           <button id="colorCircle" class="colorCircle blobby" aria-label="Change color"></button>
@@ -183,6 +211,10 @@
     <!-- WIN / LOSE -->
     <section class="screen" id="endScreen">
       <div class="bigCircle blobby" id="winCircle"></div>
+      <div class="slot-reel hidden" id="slotReel">
+        <div class="reel-window"><div class="reel-strip" id="reelStrip"></div></div>
+        <div class="reel-award" id="reelAward"></div>
+      </div>
       <div class="endMsg" id="endMsg"></div>
       <div class="endSub" id="endSub"></div>
       <button id="playAgainBtn" class="big blobby hidden">Play Again</button>
@@ -388,12 +420,23 @@
             break;
           case 'buzz':
             if (navigator.vibrate) navigator.vibrate([0, 60, 35, 60]);
-            popConfetti();
+            // Confetti only for player↔player bumps (other player's color, doubled)
+            // and mystery blobs (rainbow). NPC pops just vibrate.
+            if (msg.rainbow) popConfetti(RAINBOW, 92);
+            else if (msg.confetti) popConfetti([msg.confetti], 92);
             break;
           case 'game-over':
             showEnd(msg);
             break;
+          case 'spin':
+            runSlotMachine(msg.award, msg.reel);
+            break;
+          case 'inventory':
+            myInventory = Array.isArray(msg.items) ? msg.items : [];
+            renderPowerups();
+            break;
           case 'game-reset':
+            renderPowerups();
             showScreen(playScreen);
             barFill.style.width = '0%';
             break;
@@ -435,9 +478,71 @@
       }, 1000 / SEND_HZ);
     }
 
+    // ---- Power-ups ---------------------------------------------------------
+    // Keep this id list in sync with host.html. Emoji placeholders for now.
+    const POWERUPS = [
+      { id: 'super-bounce',  name: 'Super Bounce',   img: '/images/superbounce.png' },
+      { id: 'invincible-5',  name: '5s Invincible',  img: '/images/5sinvincible.png' },
+      { id: 'invincible-10', name: '10s Invincible', img: '/images/10sinvincible.png' },
+      { id: 'super-speed',   name: 'Super Speed',    img: '/images/speed.png' },
+      { id: 'magnet',        name: 'Blob Magnet',    img: '/images/blobmagnet.png' },
+      { id: 'growth',        name: 'Growth Boost',   img: '/images/growthboost.png' },
+      { id: 'bomb-blast',    name: 'Bomb Blast',     img: '/images/bombblast.png' },
+      { id: 'grab-radius',   name: 'Grab Radius',    img: '/images/grabradius.png' },
+    ];
+    const PU_IMG = Object.fromEntries(POWERUPS.map(p => [p.id, p.img]));
+    const PU_NAME = Object.fromEntries(POWERUPS.map(p => [p.id, p.name]));
+    const MAX_INV = 6;
+    let myInventory = [];
+    const RAINBOW = ['#ff5566', '#ff9f43', '#ffd93d', '#4ec16b', '#4f9dff', '#9b6bff'];
+
+    const puGrid = document.getElementById('puGrid');
+    const slotReel = document.getElementById('slotReel');
+    const reelStrip = document.getElementById('reelStrip');
+    const reelAward = document.getElementById('reelAward');
+
+    function renderPowerups() {
+      puGrid.innerHTML = '';
+      for (let i = 0; i < MAX_INV; i++) {
+        const id = myInventory[i];
+        const slot = document.createElement('div');
+        slot.className = 'pu-slot' + (id ? ' filled' : '');
+        if (id) {
+          slot.innerHTML = `<img src="${PU_IMG[id]}" alt="${PU_NAME[id]}">`;
+          slot.title = PU_NAME[id];
+          slot.addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'use-powerup', powerup: id }));
+            myInventory.splice(i, 1); renderPowerups();   // optimistic; host confirms via 'inventory'
+          });
+        }
+        puGrid.appendChild(slot);
+      }
+    }
+    function runSlotMachine(award, reel) {
+      winCircle.classList.add('hidden');
+      slotReel.classList.remove('hidden');
+      reelAward.textContent = '';
+      const ITEM = 116, SPINS = 4;
+      const items = [];
+      for (let s = 0; s < SPINS; s++) items.push(...reel);
+      const landIdx = items.length + Math.max(0, reel.indexOf(award));
+      items.push(...reel);   // one more cycle containing the award
+      reelStrip.innerHTML = items.map(id => `<div class="reel-item"><img src="${PU_IMG[id]}" alt=""></div>`).join('');
+      reelStrip.style.transition = 'none';
+      reelStrip.style.transform = 'translateX(0)';
+      void reelStrip.offsetWidth;   // reflow so the reset takes before the animation
+      reelStrip.style.transition = 'transform 2.6s cubic-bezier(.15,.7,.2,1)';
+      reelStrip.style.transform = `translateX(${-landIdx * ITEM}px)`;
+      setTimeout(() => { reelAward.textContent = PU_NAME[award]; }, 2650);
+    }
+
     // ---- Win / lose screen -------------------------------------------------
     function showEnd(msg) {
       const iWon = msg.winnerId === myId;
+      // Default: color circle. A 'spin' message (winner only) replaces it with the reel.
+      winCircle.classList.remove('hidden');
+      slotReel.classList.add('hidden');
+      reelAward.textContent = '';
       winCircle.style.setProperty('--c', msg.winnerColor);
       if (iWon) {
         endMsg.textContent = '🎉 You win!';
@@ -521,10 +626,12 @@
     }
     const confetti = [];
     let confettiRAF = null, lastPop = 0;
-    function popConfetti() {
-      const palette = ['#ff6b6b', '#ffd166', '#3ddc84', '#4f9dff', '#c77dff', '#ff8fab', myColor];
+    function popConfetti(colors, count) {
+      const palette = (colors && colors.length) ? colors
+        : ['#ff6b6b', '#ffd166', '#3ddc84', '#4f9dff', '#c77dff', '#ff8fab', myColor];
+      const n = count || 46;
       const cx = pW / 2, cy = pH * 0.42;
-      for (let i = 0; i < 46; i++) {
+      for (let i = 0; i < n; i++) {
         const ang = Math.random() * Math.PI * 2;
         const spd = 160 + Math.random() * 340;
         const life = 0.9 + Math.random() * 0.8;
