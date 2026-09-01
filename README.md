@@ -87,33 +87,18 @@ Server listens on `http://localhost:3000` (override with `PORT`).
 - Desktop / host page: `/`
 - Phone / controller page: `/controller?room=<code>` (opened by scanning the QR)
 
-## Testing on a phone (HTTPS required)
+## Phone motion controls
 
-Motion sensor APIs are blocked on insecure origins, so a phone **cannot** use
-`http://localhost` (nor a plain `http://` LAN IP). Expose the server over HTTPS
-with a tunnel and open that URL for **both** pages. Cloudflare's `cloudflared`
-needs no account:
+Motion sensor APIs require a secure context. The desktop game runs locally over
+HTTP; to use a phone as a controller, serve both pages through an HTTPS
+deployment or reverse proxy. The QR code follows the request origin and uses
+HTTP locally or the forwarded HTTPS protocol when the app is behind a standard
+reverse proxy.
 
-```bash
-cloudflared tunnel --url http://localhost:3000
-```
-
-It prints a `https://<random>.trycloudflare.com` URL. (ngrok also works:
-`ngrok http 3000`, but it now requires a free account + authtoken.)
-
-1. Open the tunnel's **https** URL's `/` on your desktop. The QR encodes that
-   same tunnel host (the server builds it from the request's `Host` header), so
-   it's reachable from your phone.
-2. Scan the QR with your phone. The QR stays on the desktop (shrunk into the
-   corner) so more players can join at any time — or use **Copy Room URL** (appears
-   under the QR once someone joins) to share the join link directly.
-3. On the phone: **Tap to Start** → grant motion access.
-4. Tilt to drive your blob like a marble: tip forward → up, back → down,
-   left/right → left/right. Personalize your color/name and watch your growth
-   bar; the desktop shows every blob with its name and progress.
-
-> The tunnel URL is regenerated each time you restart `cloudflared`. If you
-> restart it, reopen the new URL on the desktop and re-scan.
+On the phone, open the controller URL, tap **Tap to Start**, grant motion
+access, and tilt to drive your blob like a marble. Personalize your color/name
+and watch your growth bar; the desktop shows every blob with its name and
+progress.
 
 ### Device notes
 - **iOS Safari**: motion access requires a user gesture — the "Tap to Start"

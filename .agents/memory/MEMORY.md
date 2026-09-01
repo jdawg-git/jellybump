@@ -1,0 +1,1 @@
+- [Dependency installation side effects](dependency-installation-side-effects.md) — verify and revert incidental project config or lockfile changes after installing packages.

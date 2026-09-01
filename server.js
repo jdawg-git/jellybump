@@ -112,9 +112,9 @@ wss.on('connection', (ws, req) => {
   ws.slotId = null;
   ws.isAlive = true;
   ws.on('pong', () => { ws.isAlive = true; });
-  // Host header as seen on the upgrade request — through a tunnel this is the
-  // public host, so the QR points at a URL the phone can actually reach.
+  // Preserve the host used by the desktop so the QR points at the same origin.
   ws.hostHeader = req.headers.host;
+  ws.forwardedProto = req.headers['x-forwarded-proto'];
 
   ws.on('message', async (raw) => {
     let msg;
@@ -130,7 +130,9 @@ wss.on('connection', (ws, req) => {
         rooms.set(code, { host: ws, slots: new Map(), nextId: 1, colorIndex: 0 });
         ws.role = 'host';
         ws.roomCode = code;
-        const scheme = 'https'; // tunnels terminate TLS; the phone needs https anyway
+        const scheme = typeof ws.forwardedProto === 'string'
+          ? ws.forwardedProto.split(',')[0].trim()
+          : 'http';
         const url = `${scheme}://${ws.hostHeader}/controller?room=${code}`;
         let qr = null;
         try {
@@ -318,5 +320,4 @@ wss.on('close', () => clearInterval(heartbeat));
 server.listen(PORT, () => {
   console.log(`Tilt controller server listening on http://localhost:${PORT}`);
   console.log(`Desktop:    http://localhost:${PORT}/`);
-  console.log(`For phone testing, expose it over HTTPS (e.g. cloudflared tunnel --url http://localhost:${PORT})`);
 });
