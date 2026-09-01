@@ -361,15 +361,17 @@ wss.on('connection', (ws, req) => {
         const winner = room.slots.get(msg.winnerId);
         if (!room.roundComplete) {
           room.roundComplete = true;
-          stats.roundsCompleted += 1;
-          stats.totalRoundPlayers += room.slots.size;
-          if (room.roundStartedAt) stats.totalRoundDurationMs += Date.now() - room.roundStartedAt;
+          if (!msg.demo) {
+            stats.roundsCompleted += 1;
+            stats.totalRoundPlayers += room.slots.size;
+            if (room.roundStartedAt) stats.totalRoundDurationMs += Date.now() - room.roundStartedAt;
+          }
         }
         broadcast(room, {
           type: 'game-over',
           winnerId: msg.winnerId,
-          winnerName: winner ? winner.name : 'A player',
-          winnerColor: winner ? winner.color : '#ffffff',
+          winnerName: winner ? winner.name : (msg.winnerName || 'A player'),
+          winnerColor: winner ? winner.color : (msg.winnerColor || '#ffffff'),
         });
         break;
       }
@@ -378,8 +380,8 @@ wss.on('connection', (ws, req) => {
         if (ws.role !== 'host' || !ws.roomCode) return;
         const room = rooms.get(ws.roomCode);
         if (!room) return;
-        stats.replays += 1;
-        room.roundStartedAt = Date.now();
+        if (!msg.demo) stats.replays += 1;
+        room.roundStartedAt = msg.demo ? null : Date.now();
         room.roundComplete = false;
         broadcast(room, { type: 'game-reset' });
         break;
