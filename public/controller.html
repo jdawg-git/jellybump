@@ -604,13 +604,12 @@
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true;
       setStartStatus('Requesting sensor access…');
-      // Begin motion permission first so fullscreen cannot consume the transient
-      // user activation it needs on iOS. Start display requests before awaiting
-      // that result so they still belong to this same click gesture.
-      const permissionRequest = requestPermissions();
-      void requestFullscreenLandscape();
-      const ok = await permissionRequest;
+      // Motion permission takes priority: competing fullscreen calls can prevent
+      // iOS from showing its sensor prompt. On browsers without that prompt this
+      // resolves immediately, leaving the same tap available for fullscreen.
+      const ok = await requestPermissions();
       if (!ok) { setStartStatus('Motion access denied. Enable it in Settings and reload.', 'error'); startBtn.disabled = false; return; }
+      void requestFullscreenLandscape();
       started = true;
       acquireWakeLock();
       startSensors();
