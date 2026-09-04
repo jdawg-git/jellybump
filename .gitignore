@@ -2,3 +2,13 @@ node_modules/
 .DS_Store
 npm-debug.log*
 *.log
+
+# Replit-generated local state
+.cache/
+.local/
+.upm/
+
+# Local environment variables
+.env
+.env.*
+!.env.example
