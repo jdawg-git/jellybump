@@ -309,6 +309,42 @@
     }
     window.addEventListener('resize', applyOrientation);
     window.addEventListener('orientationchange', applyOrientation);
+    document.addEventListener('fullscreenchange', () => requestAnimationFrame(applyOrientation));
+    document.addEventListener('webkitfullscreenchange', () => requestAnimationFrame(applyOrientation));
+
+    function tryLandscapeLock() {
+      try {
+        if (screen.orientation && typeof screen.orientation.lock === 'function') {
+          return Promise.resolve(screen.orientation.lock('landscape')).catch(() => false);
+        }
+      } catch { /* Native lock is optional. */ }
+      return Promise.resolve(false);
+    }
+
+    function requestFullscreenLandscape() {
+      const root = document.documentElement;
+      // Some browsers permit an immediate lock; others require fullscreen
+      // first, so retry once the fullscreen request settles.
+      void tryLandscapeLock();
+      let fullscreenRequest = Promise.resolve();
+      try {
+        if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+          if (typeof root.requestFullscreen === 'function') {
+            fullscreenRequest = Promise.resolve(root.requestFullscreen({ navigationUI: 'hide' }));
+          } else if (typeof root.webkitRequestFullscreen === 'function') {
+            fullscreenRequest = Promise.resolve(root.webkitRequestFullscreen());
+          }
+        }
+      } catch { /* Fullscreen is optional; keep the browser UI when unavailable. */ }
+
+      return fullscreenRequest
+        .catch(() => false)
+        .then(() => tryLandscapeLock())
+        .finally(() => {
+          requestAnimationFrame(applyOrientation);
+          setTimeout(applyOrientation, 150);
+        });
+    }
 
     // ---- Tilt state --------------------------------------------------------
     let latest = { beta: 0, gamma: 0 };
@@ -568,7 +604,12 @@
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true;
       setStartStatus('Requesting sensor access…');
-      const ok = await requestPermissions();
+      // Begin motion permission first so fullscreen cannot consume the transient
+      // user activation it needs on iOS. Start display requests before awaiting
+      // that result so they still belong to this same click gesture.
+      const permissionRequest = requestPermissions();
+      void requestFullscreenLandscape();
+      const ok = await permissionRequest;
       if (!ok) { setStartStatus('Motion access denied. Enable it in Settings and reload.', 'error'); startBtn.disabled = false; return; }
       started = true;
       acquireWakeLock();
